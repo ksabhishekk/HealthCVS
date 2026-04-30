@@ -26,7 +26,7 @@ contract PatientRegistry {
         uint256 registeredAt;
     }
 
-    mapping(bytes2 => Patient) private patients;
+    mapping(bytes32 => Patient) private patients;
     mapping(address => bytes32) private walletToAadhaar;
 
     event PatientRegistered(
