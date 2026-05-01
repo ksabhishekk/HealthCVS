@@ -5,3 +5,10 @@ cache/
 coverage/
 coverage.json
 typechain-types/
+
+# Hospital portal
+hospital-portal/backend/node_modules/
+hospital-portal/frontend/node_modules/
+hospital-portal/frontend/dist/
+hospital-portal/backend/.env
+hospital-portal/frontend/.env
