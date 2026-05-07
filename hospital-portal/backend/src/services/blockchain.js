@@ -1,8 +1,9 @@
 const { ethers } = require('ethers')
 const ClaimSubmissionABI = require('../abis/ClaimSubmission.json')
 const PatientRegistryABI = require('../abis/PatientRegistry.json')
+const AutoAdjudicationABI = require('../abis/AutoAdjudication.json')
 
-let _provider, _wallet, _claimSubmission, _patientRegistry
+let _provider, _wallet, _claimSubmission, _patientRegistry, _autoAdjudication
 
 const getContracts = () => {
   if (!_provider) {
@@ -18,10 +19,26 @@ const getContracts = () => {
     if (prAddress) {
       _patientRegistry = new ethers.Contract(prAddress, PatientRegistryABI, _wallet)
     }
+
+    const aaAddress = process.env.AUTO_ADJUDICATION_ADDRESS
+    if (aaAddress && aaAddress !== '0x0000000000000000000000000000000000000000') {
+      _autoAdjudication = new ethers.Contract(aaAddress, AutoAdjudicationABI, _wallet)
+    }
   }
-  return { provider: _provider, wallet: _wallet, claimSubmission: _claimSubmission, patientRegistry: _patientRegistry }
+  return { provider: _provider, wallet: _wallet, claimSubmission: _claimSubmission, patientRegistry: _patientRegistry, autoAdjudication: _autoAdjudication }
 }
 
+// TX 1 — Register patient on-chain (insurer role required)
+const registerPatientOnBlockchain = async ({ aadhaarHash, walletAddress, policyId }) => {
+  const { patientRegistry } = getContracts()
+  if (!patientRegistry) throw new Error('PatientRegistry contract not available.')
+
+  const tx = await patientRegistry.registerPatient(aadhaarHash, walletAddress || ethers.ZeroAddress, policyId || '')
+  const receipt = await tx.wait()
+  return { txHash: receipt.hash }
+}
+
+// TX 2 — Initialize claim with IPFS document CIDs (hospital clerk role required)
 const submitClaimToBlockchain = async ({ aadhaarHash, procedureCode, claimedAmount, cidBill, cidPrescription, cidDischarge }) => {
   const { claimSubmission } = getContracts()
   if (!claimSubmission) throw new Error('ClaimSubmission contract not yet deployed. Set CLAIM_SUBMISSION_ADDRESS in .env')
@@ -51,6 +68,7 @@ const submitClaimToBlockchain = async ({ aadhaarHash, procedureCode, claimedAmou
   return { txHash: receipt.hash, blockchainClaimId }
 }
 
+// TX 3 — Doctor authenticates the claim (doctor role required)
 const authenticateClaimOnBlockchain = async (blockchainClaimId) => {
   const { claimSubmission } = getContracts()
   if (!claimSubmission) throw new Error('ClaimSubmission contract not yet deployed.')
@@ -60,13 +78,69 @@ const authenticateClaimOnBlockchain = async (blockchainClaimId) => {
   return { txHash: receipt.hash }
 }
 
-const registerPatientOnBlockchain = async ({ aadhaarHash, walletAddress, policyId }) => {
-  const { patientRegistry } = getContracts()
-  if (!patientRegistry) throw new Error('PatientRegistry contract not available.')
+// TX 4 — Write AI fraud score on-chain (admin/oracle role required)
+const updateFraudScoreOnBlockchain = async (blockchainClaimId, fraudScore) => {
+  const { claimSubmission } = getContracts()
+  if (!claimSubmission) throw new Error('ClaimSubmission contract not yet deployed.')
+  if (fraudScore < 0 || fraudScore > 100) throw new Error('Fraud score must be between 0 and 100.')
 
-  const tx = await patientRegistry.registerPatient(aadhaarHash, walletAddress || ethers.ZeroAddress, policyId || '')
+  const tx = await claimSubmission.updateFraudScore(blockchainClaimId, BigInt(fraudScore))
   const receipt = await tx.wait()
   return { txHash: receipt.hash }
 }
 
-module.exports = { getContracts, submitClaimToBlockchain, authenticateClaimOnBlockchain, registerPatientOnBlockchain }
+// TX 5 — Run automated adjudication rules engine (admin/insurer role required)
+const adjudicateClaimOnBlockchain = async (blockchainClaimId) => {
+  const { autoAdjudication } = getContracts()
+  if (!autoAdjudication) throw new Error('AutoAdjudication contract not yet deployed. Set AUTO_ADJUDICATION_ADDRESS in .env')
+
+  const tx = await autoAdjudication.adjudicateClaim(blockchainClaimId)
+  const receipt = await tx.wait()
+
+  let approved = null
+  let reason = null
+  const iface = autoAdjudication.interface
+  for (const log of receipt.logs) {
+    try {
+      const parsed = iface.parseLog(log)
+      if (parsed?.name === 'ClaimAdjudicated') {
+        approved = parsed.args.approved
+        reason = parsed.args.reason
+        break
+      }
+    } catch {}
+  }
+
+  return { txHash: receipt.hash, approved, reason }
+}
+
+// TX 6 — Insurer manual review / override (insurer role required)
+const insurerReviewOnBlockchain = async (blockchainClaimId, approve) => {
+  const { autoAdjudication } = getContracts()
+  if (!autoAdjudication) throw new Error('AutoAdjudication contract not yet deployed.')
+
+  const tx = await autoAdjudication.insurerReview(blockchainClaimId, approve)
+  const receipt = await tx.wait()
+  return { txHash: receipt.hash, approved: approve }
+}
+
+// TX 7 — Settle claim (insurer role required)
+const settleClaimOnBlockchain = async (blockchainClaimId) => {
+  const { autoAdjudication } = getContracts()
+  if (!autoAdjudication) throw new Error('AutoAdjudication contract not yet deployed.')
+
+  const tx = await autoAdjudication.settleClaim(blockchainClaimId)
+  const receipt = await tx.wait()
+  return { txHash: receipt.hash }
+}
+
+module.exports = {
+  getContracts,
+  registerPatientOnBlockchain,
+  submitClaimToBlockchain,
+  authenticateClaimOnBlockchain,
+  updateFraudScoreOnBlockchain,
+  adjudicateClaimOnBlockchain,
+  insurerReviewOnBlockchain,
+  settleClaimOnBlockchain,
+}
