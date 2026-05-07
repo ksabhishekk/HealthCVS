@@ -1,6 +1,14 @@
 const express = require('express')
 const { authenticate, requireAdmin } = require('../middleware/auth')
-const { submitClaimToBlockchain, authenticateClaimOnBlockchain, getContracts } = require('../services/blockchain')
+const {
+  submitClaimToBlockchain,
+  authenticateClaimOnBlockchain,
+  updateFraudScoreOnBlockchain,
+  adjudicateClaimOnBlockchain,
+  insurerReviewOnBlockchain,
+  settleClaimOnBlockchain,
+  getContracts,
+} = require('../services/blockchain')
 const { uploadToPinata, ipfsGatewayUrl } = require('../services/pinata')
 const Patient = require('../models/Patient')
 
