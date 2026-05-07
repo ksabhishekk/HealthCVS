@@ -232,4 +232,52 @@ router.post('/:id/authenticate', requireAdmin, async (req, res) => {
   }
 })
 
+// POST /api/claims/:id/fraud-score — TX4: write AI fraud score on-chain (admin/oracle)
+router.post('/:id/fraud-score', requireAdmin, async (req, res) => {
+  try {
+    const { fraudScore } = req.body
+    if (fraudScore === undefined || fraudScore === null) {
+      return res.status(400).json({ error: 'fraudScore (0–100) is required' })
+    }
+    const { txHash } = await updateFraudScoreOnBlockchain(Number(req.params.id), Number(fraudScore))
+    res.json({ success: true, txHash, fraudScore: Number(fraudScore) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/claims/:id/adjudicate — TX5: run automated adjudication rules engine (admin)
+router.post('/:id/adjudicate', requireAdmin, async (req, res) => {
+  try {
+    const { txHash, approved, reason } = await adjudicateClaimOnBlockchain(Number(req.params.id))
+    res.json({ success: true, txHash, approved, reason })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/claims/:id/insurer-review — TX6: insurer approves or rejects the claim (admin)
+router.post('/:id/insurer-review', requireAdmin, async (req, res) => {
+  try {
+    const { approve } = req.body
+    if (approve === undefined || approve === null) {
+      return res.status(400).json({ error: 'approve (true/false) is required' })
+    }
+    const { txHash, approved } = await insurerReviewOnBlockchain(Number(req.params.id), Boolean(approve))
+    res.json({ success: true, txHash, approved })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/claims/:id/settle — TX7: settle the claim (admin)
+router.post('/:id/settle', requireAdmin, async (req, res) => {
+  try {
+    const { txHash } = await settleClaimOnBlockchain(Number(req.params.id))
+    res.json({ success: true, txHash })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
