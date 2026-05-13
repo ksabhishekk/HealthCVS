@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle, Loader2, ShieldCheck, Bot, Gavel, BadgeCheck, Banknote, XCircle } from 'lucide-react'
+import { ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle, Loader2, Bot, Gavel, BadgeCheck, Banknote, XCircle } from 'lucide-react'
 import { getClaim, authenticateClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim } from '../../api/claims'
 import ClaimStatusBadge from '../../components/ClaimStatusBadge'
 import { useAuth } from '../../context/AuthContext'
