@@ -1,6 +1,7 @@
 const express = require('express')
 const { authenticate, requireAdmin } = require('../middleware/auth')
 const {
+  registerPatientOnBlockchain,
   submitClaimToBlockchain,
   authenticateClaimOnBlockchain,
   updateFraudScoreOnBlockchain,
@@ -204,7 +205,10 @@ router.post('/submit', async (req, res) => {
     // cidDischarge slot holds the full metadata bundle CID
     const cidDischarge = metadataCid
 
-    // Submit to blockchain
+    // TX1 — auto-register patient on-chain if not already registered
+    await ensurePatientOnChain(aadhaarHash, claimData.insurance?.policyNumber)
+
+    // TX2 — Submit to blockchain
     const { txHash, blockchainClaimId } = await submitClaimToBlockchain({
       aadhaarHash,
       procedureCode: claimData.medical.procedureCode,
