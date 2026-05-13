@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
-import { getClaim, authenticateClaim } from '../../api/claims'
+import { ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle, Loader2, ShieldCheck, Bot, Gavel, BadgeCheck, Banknote, XCircle } from 'lucide-react'
+import { getClaim, authenticateClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim } from '../../api/claims'
 import ClaimStatusBadge from '../../components/ClaimStatusBadge'
 import { useAuth } from '../../context/AuthContext'
 
@@ -33,14 +33,29 @@ function Field({ label, value }) {
   )
 }
 
+function TxBanner({ tx, label }) {
+  if (!tx) return null
+  return (
+    <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg mb-5 text-sm">
+      <CheckCircle className="w-4 h-4 shrink-0" />
+      {label} TX:{' '}
+      <a href={`https://amoy.polygonscan.com/tx/${tx}`} target="_blank" rel="noreferrer" className="underline font-mono">
+        {shortenHash(tx)}
+      </a>
+    </div>
+  )
+}
+
 export default function ClaimDetail() {
   const { id } = useParams()
   const { isAdmin } = useAuth()
   const [claim, setClaim] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [authLoading, setAuthLoading] = useState(false)
-  const [authTx, setAuthTx] = useState(null)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [lastTx, setLastTx] = useState(null)
+  const [lastTxLabel, setLastTxLabel] = useState('')
   const [error, setError] = useState('')
+  const [fraudInput, setFraudInput] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -49,18 +64,19 @@ export default function ClaimDetail() {
 
   useEffect(() => { load() }, [id])
 
-  const handleAuthenticate = async () => {
-    if (!confirm('Submit TX3 — Doctor/Admin Authentication on blockchain?')) return
-    setAuthLoading(true)
+  const runAction = async (label, fn) => {
+    setActionLoading(true)
     setError('')
+    setLastTx(null)
     try {
-      const { data } = await authenticateClaim(id)
-      setAuthTx(data.txHash)
+      const { data } = await fn()
+      setLastTx(data.txHash)
+      setLastTxLabel(label)
       load()
     } catch (err) {
-      setError(err.response?.data?.error || 'Authentication failed')
+      setError(err.response?.data?.error || `${label} failed`)
     } finally {
-      setAuthLoading(false)
+      setActionLoading(false)
     }
   }
 
@@ -69,44 +85,103 @@ export default function ClaimDetail() {
 
   const meta = claim.metadata
   const docs = meta?.documents || []
+  const s = claim.status
+
+  const actionBtn = (icon, label, onClick, variant = 'primary') => (
+    <button
+      className={variant === 'danger' ? 'btn-secondary text-red-600 border-red-200 hover:bg-red-50' : 'btn-primary'}
+      onClick={onClick}
+      disabled={actionLoading}
+    >
+      {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : icon}
+      {actionLoading ? 'Processing…' : label}
+    </button>
+  )
 
   return (
     <div>
+      {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <Link to="/claims" className="btn-secondary py-1.5"><ArrowLeft className="w-4 h-4" /></Link>
           <div>
             <h1 className="text-xl font-bold text-gray-900">Claim #{claim.blockchainClaimId}</h1>
             <div className="flex items-center gap-2 mt-1">
-              <ClaimStatusBadge status={claim.status} />
+              <ClaimStatusBadge status={s} />
               {claim.fraudScore > 0 && (
                 <span className={`badge ${claim.fraudScore >= 70 ? 'bg-red-100 text-red-700' : claim.fraudScore >= 40 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
-                  Fraud Score: {claim.fraudScore}
+                  Fraud Score: {claim.fraudScore}/100
                 </span>
               )}
             </div>
           </div>
         </div>
-        {isAdmin && claim.status === 0 && (
-          <button className="btn-primary" onClick={handleAuthenticate} disabled={authLoading}>
-            {authLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Processing…</> : <><CheckCircle className="w-4 h-4" /> Authenticate (TX3)</>}
-          </button>
+
+        {/* Action buttons — only visible to admin, shown based on current status */}
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            {/* TX3 — Authenticate */}
+            {s === 0 && actionBtn(<CheckCircle className="w-4 h-4" />, 'Authenticate (TX3)', () =>
+              runAction('Authenticated', () => authenticateClaim(id))
+            )}
+
+            {/* TX4 — Fraud Score */}
+            {s === 1 && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min="0" max="100"
+                  placeholder="Fraud score 0–100"
+                  value={fraudInput}
+                  onChange={e => setFraudInput(e.target.value)}
+                  className="input w-40 py-1.5 text-sm"
+                />
+                {actionBtn(<Bot className="w-4 h-4" />, 'Write Score (TX4)', () => {
+                  const score = Number(fraudInput)
+                  if (isNaN(score) || score < 0 || score > 100) {
+                    setError('Enter a fraud score between 0 and 100')
+                    return Promise.reject()
+                  }
+                  return runAction('Fraud score written', () => setFraudScore(id, score))
+                })}
+              </div>
+            )}
+
+            {/* TX5 — Adjudicate */}
+            {s === 2 && actionBtn(<Gavel className="w-4 h-4" />, 'Run Adjudication (TX5)', () =>
+              runAction('Adjudicated', () => adjudicateClaim(id))
+            )}
+
+            {/* TX6 — Insurer review: approve or reject */}
+            {(s === 3 || s === 6) && (
+              <div className="flex items-center gap-2">
+                {actionBtn(<BadgeCheck className="w-4 h-4" />, 'Approve (TX6)', () =>
+                  runAction('Approved by insurer', () => insurerReview(id, true))
+                )}
+                {actionBtn(<XCircle className="w-4 h-4" />, 'Reject (TX6)', () =>
+                  runAction('Rejected by insurer', () => insurerReview(id, false)), 'danger'
+                )}
+              </div>
+            )}
+
+            {/* TX7 — Settle */}
+            {s === 4 && actionBtn(<Banknote className="w-4 h-4" />, 'Settle Claim (TX7)', () =>
+              runAction('Claim settled', () => settleClaim(id))
+            )}
+          </div>
         )}
       </div>
 
+      {/* Feedback banners */}
       {error && (
         <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-5 text-sm">
           <AlertTriangle className="w-4 h-4" />
           {error}
         </div>
       )}
-      {authTx && (
-        <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg mb-5 text-sm">
-          <CheckCircle className="w-4 h-4" />
-          Authenticated! TX: <a href={`https://amoy.polygonscan.com/tx/${authTx}`} target="_blank" rel="noreferrer" className="underline font-mono">{shortenHash(authTx)}</a>
-        </div>
-      )}
+      <TxBanner tx={lastTx} label={lastTxLabel} />
 
+      {/* Claim info grid */}
       <div className="grid grid-cols-3 gap-5">
         {/* Patient */}
         <div className="card p-5">
@@ -156,7 +231,7 @@ export default function ClaimDetail() {
           </dl>
         </div>
 
-        {/* Blockchain */}
+        {/* Blockchain audit trail */}
         <div className="card p-5 col-span-3">
           <h2 className="font-semibold text-gray-900 mb-4">Blockchain Record</h2>
           <div className="grid grid-cols-4 gap-4">
@@ -164,6 +239,10 @@ export default function ClaimDetail() {
             <Field label="Submitted" value={fmtTs(claim.createdAt)} />
             <Field label="Last Updated" value={fmtTs(claim.updatedAt)} />
             <Field label="Clerk Wallet" value={claim.clerkAddress ? `${claim.clerkAddress.slice(0, 8)}…${claim.clerkAddress.slice(-6)}` : null} />
+            {claim.doctorAddress && claim.doctorAddress !== '0x0000000000000000000000000000000000000000' && (
+              <Field label="Doctor Wallet" value={`${claim.doctorAddress.slice(0, 8)}…${claim.doctorAddress.slice(-6)}`} />
+            )}
+            {claim.flagReason && <Field label="Flag Reason" value={claim.flagReason} />}
           </div>
           <div className="mt-3 flex gap-3">
             {claim.cidMetadata && (
