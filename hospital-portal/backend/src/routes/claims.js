@@ -1,7 +1,6 @@
 const express = require('express')
 const { authenticate, requireAdmin } = require('../middleware/auth')
 const {
-  registerPatientOnBlockchain,
   submitClaimToBlockchain,
   authenticateClaimOnBlockchain,
   updateFraudScoreOnBlockchain,
@@ -15,21 +14,6 @@ const Patient = require('../models/Patient')
 
 const router = express.Router()
 router.use(authenticate)
-
-// Helper: ensure patient is registered on-chain (TX1) before a claim can be submitted (TX2)
-const ensurePatientOnChain = async (aadhaarHash, policyId) => {
-  const { patientRegistry } = getContracts()
-  if (!patientRegistry) return
-
-  const isActive = await patientRegistry.isPatientActive(aadhaarHash)
-  if (!isActive) {
-    await registerPatientOnBlockchain({
-      aadhaarHash,
-      walletAddress: null,
-      policyId: policyId || '',
-    })
-  }
-}
 
 // Helper: fetch IPFS JSON metadata for a claim
 const fetchClaimMetadata = async (cid) => {
@@ -204,9 +188,6 @@ router.post('/submit', async (req, res) => {
     const cidPrescription = findCid('consultation_papers')
     // cidDischarge slot holds the full metadata bundle CID
     const cidDischarge = metadataCid
-
-    // TX1 — auto-register patient on-chain if not already registered
-    await ensurePatientOnChain(aadhaarHash, claimData.insurance?.policyNumber)
 
     // TX2 — Submit to blockchain
     const { txHash, blockchainClaimId } = await submitClaimToBlockchain({
