@@ -2,7 +2,8 @@ const hre = require('hardhat')
 
 // ── Fill these in ────────────────────────────────────────────────────────────
 const ROLE_MANAGER_ADDRESS = '0x3523B81c2FCD522f37865728aEa869Eeca164AA4'
-const HOSPITAL_WALLET      = '0xF33bA5600D0ec852599741Bd5594Aa12b45aCA2F'
+const HOSPITAL_WALLET = '0xF33bA5600D0ec852599741Bd5594Aa12b45aCA2F'
+const INSURER_WALLET = '0xEa18D341224d9100B694921Eca5e1689dc8C1504'
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -21,8 +22,14 @@ async function main() {
   await tx2.wait()
   console.log('✓ DOCTOR_ROLE granted. TX:', tx2.hash)
 
+  console.log('\nGranting INSURER_ROLE to insurer wallet...')
+  const tx3 = await RoleManager.grantInsurer(INSURER_WALLET)
+  await tx3.wait()
+  console.log('✓ INSURER_ROLE granted. TX:', tx3.hash)
+
   console.log('\nAll roles granted successfully.')
   console.log('Hospital wallet', HOSPITAL_WALLET, 'can now submit and authenticate claims.')
+  console.log('Insurer wallet', INSURER_WALLET, 'can now register patients and process claims.')
 }
 
 main().catch((err) => {
