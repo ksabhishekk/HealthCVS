@@ -58,7 +58,8 @@ export default function NewClaim() {
     setError('')
     try {
       const payload = {
-        aadhaarHash: data.aadhaarHash,
+        aadhaarHash: data.aadhaarHash || undefined,
+        aadhaarNumber: data.aadhaarNumber || undefined,
         patient: {
           name: data.patient?.name,
           aadhaarLast4: data.patient?.aadhaarLast4,

@@ -12,3 +12,10 @@ hospital-portal/frontend/node_modules/
 hospital-portal/frontend/dist/
 hospital-portal/backend/.env
 hospital-portal/frontend/.env
+
+# Insurance portal
+insurance-portal/backend/node_modules/
+insurance-portal/frontend/node_modules/
+insurance-portal/frontend/dist/
+insurance-portal/backend/.env
+insurance-portal/frontend/.env

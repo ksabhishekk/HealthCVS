@@ -62,7 +62,7 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
   return base
 }
 
-// GET /api/claims — list all claims from blockchain events
+// GET /api/claims — list all claims by iterating getTotalClaims()
 router.get('/', async (req, res) => {
   try {
     const { claimSubmission } = getContracts()
@@ -70,13 +70,13 @@ router.get('/', async (req, res) => {
       return res.json({ claims: [], total: 0, message: 'ClaimSubmission contract not deployed yet' })
     }
 
-    const filter = claimSubmission.filters.ClaimInitialized()
-    const events = await claimSubmission.queryFilter(filter, 0, 'latest')
+    const total = Number(await claimSubmission.getTotalClaims())
+    if (total === 0) return res.json({ claims: [], total: 0 })
 
     const claims = await Promise.all(
-      events.map(async (ev) => {
+      Array.from({ length: total }, (_, i) => i + 1).map(async (id) => {
         try {
-          const onChain = await claimSubmission.getClaim(ev.args.claimId)
+          const onChain = await claimSubmission.getClaim(id)
           return enrichClaim(onChain, false)
         } catch {
           return null
@@ -99,20 +99,20 @@ router.get('/stats', async (req, res) => {
       return res.json({ total: 0, submitted: 0, settled: 0, flagged: 0, rejected: 0, pending: 0 })
     }
 
-    const filter = claimSubmission.filters.ClaimInitialized()
-    const events = await claimSubmission.queryFilter(filter, 0, 'latest')
+    const total = Number(await claimSubmission.getTotalClaims())
+    if (total === 0) {
+      return res.json({ total: 0, submitted: 0, doctor_authenticated: 0, fraud_scored: 0, adjudicated: 0, insurer_reviewed: 0, settled: 0, flagged: 0, rejected: 0, pending: 0 })
+    }
 
-    const claims = await Promise.all(
-      events.map(async (ev) => {
+    const statuses = (await Promise.all(
+      Array.from({ length: total }, (_, i) => i + 1).map(async (id) => {
         try {
-          const onChain = await claimSubmission.getClaim(ev.args.claimId)
+          const onChain = await claimSubmission.getClaim(id)
           return Number(onChain.status)
         } catch { return null }
       })
-    )
+    )).filter(s => s !== null)
 
-    const statuses = claims.filter(s => s !== null)
-    // Status enum: Submitted=0, DoctorAuthenticated=1, FraudScored=2, Adjudicated=3, InsurerReviewed=4, Settled=5, Flagged=6, Rejected=7
     res.json({
       total: statuses.length,
       submitted: statuses.filter(s => s === 0).length,

@@ -1,0 +1,16 @@
+[
+  {"inputs":[{"internalType":"address","name":"_roleManager","type":"address"},{"internalType":"address","name":"_claimSubmission","type":"address"}],"stateMutability":"nonpayable","type":"constructor"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"claimId","type":"uint256"},{"indexed":false,"internalType":"bool","name":"approved","type":"bool"},{"indexed":false,"internalType":"string","name":"reason","type":"string"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"ClaimAdjudicated","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"claimId","type":"uint256"},{"indexed":true,"internalType":"address","name":"hospitalWallet","type":"address"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"ClaimSettled","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":true,"internalType":"uint256","name":"claimId","type":"uint256"},{"indexed":false,"internalType":"bool","name":"approved","type":"bool"},{"indexed":false,"internalType":"uint256","name":"timestamp","type":"uint256"}],"name":"InsurerReviewed","type":"event"},
+  {"anonymous":false,"inputs":[{"indexed":false,"internalType":"string","name":"procedureCode","type":"string"},{"indexed":false,"internalType":"uint256","name":"rateInr","type":"uint256"}],"name":"ProcedureRateSet","type":"event"},
+  {"inputs":[],"name":"FRAUD_THRESHOLD","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"string","name":"_code","type":"string"},{"internalType":"uint256","name":"_rateInr","type":"uint256"}],"name":"addProcedureRate","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_claimId","type":"uint256"}],"name":"adjudicateClaim","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[],"name":"claimSubmission","outputs":[{"internalType":"contract ClaimSubmission","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"string","name":"_code","type":"string"}],"name":"getPMJAYRate","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_claimId","type":"uint256"},{"internalType":"bool","name":"_approve","type":"bool"}],"name":"insurerReview","outputs":[],"stateMutability":"nonpayable","type":"function"},
+  {"inputs":[{"internalType":"string","name":"","type":"string"}],"name":"pmjayRates","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+  {"inputs":[],"name":"roleManager","outputs":[{"internalType":"contract RoleManager","name":"","type":"address"}],"stateMutability":"view","type":"function"},
+  {"inputs":[{"internalType":"uint256","name":"_claimId","type":"uint256"}],"name":"settleClaim","outputs":[],"stateMutability":"nonpayable","type":"function"}
+]
