@@ -19,6 +19,7 @@ app.use('/api/auth', require('./routes/auth'))
 app.use('/api/claims', require('./routes/claims'))
 app.use('/api/patients', require('./routes/patients'))
 app.use('/api/staff', require('./routes/staff'))
+app.use('/api/policy', require('./routes/policy'))
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 

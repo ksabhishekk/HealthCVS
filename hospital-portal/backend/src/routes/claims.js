@@ -145,12 +145,11 @@ router.get('/:id', async (req, res) => {
 })
 
 // POST /api/claims/submit — TX2: submit new claim to blockchain
-// Clerk uploads metadata JSON to IPFS, then calls initializeClaim on-chain
 router.post('/submit', async (req, res) => {
   try {
     const claimData = req.body
 
-    // Resolve aadhaarHash
+    // --- Resolve aadhaarHash ---
     const { ethers } = require('ethers')
     let aadhaarHash = claimData.aadhaarHash
     if (!aadhaarHash && claimData.aadhaarNumber) {
@@ -158,55 +157,96 @@ router.post('/submit', async (req, res) => {
     }
     if (!aadhaarHash) return res.status(400).json({ error: 'aadhaarHash or aadhaarNumber required' })
 
-    // Build the claim metadata bundle to store on IPFS
+    // --- Validate medical data ---
+    const procedures = claimData.medical?.procedures || []
+    const doctors = claimData.medical?.doctors || []
+    if (procedures.length === 0) return res.status(400).json({ error: 'At least one procedure is required' })
+    if (doctors.length === 0) return res.status(400).json({ error: 'At least one doctor is required' })
+    if (!claimData.medical?.diagnosis) return res.status(400).json({ error: 'Diagnosis is required' })
+
+    // Derive primary procedure (highest claimed amount) and total for on-chain
+    const primaryProcedure = procedures.reduce(
+      (max, p) => Number(p.claimedAmount) > Number(max.claimedAmount) ? p : max,
+      procedures[0]
+    )
+    const totalClaimedAmount = procedures.reduce((sum, p) => sum + Number(p.claimedAmount), 0)
+    if (totalClaimedAmount <= 0) return res.status(400).json({ error: 'Claimed amount must be greater than zero' })
+
+    // --- Policy verification against insurance portal (pre-flight, no gas) ---
+    const policyWarnings = []
+    if (process.env.INSURANCE_PORTAL_URL && claimData.insurance?.policyNumber && claimData.insurance?.company) {
+      try {
+        const fetch = require('node-fetch')
+        const verifyRes = await fetch(`${process.env.INSURANCE_PORTAL_URL}/api/policy/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.INSURANCE_API_KEY || '' },
+          body: JSON.stringify({ aadhaarHash, policyId: claimData.insurance.policyNumber, insuranceCompany: claimData.insurance.company }),
+          timeout: 6000,
+        })
+        const verifyData = await verifyRes.json()
+        if (!verifyData.valid) {
+          return res.status(400).json({ error: `Policy verification failed: ${verifyData.reason}` })
+        }
+        if (!verifyData.isPolicyActive) {
+          return res.status(400).json({ error: 'Policy is inactive. Cannot file a claim against an expired policy.' })
+        }
+        if (verifyData.coverageAmount && totalClaimedAmount > verifyData.coverageAmount) {
+          policyWarnings.push(`Claimed amount (₹${totalClaimedAmount}) exceeds policy coverage (₹${verifyData.coverageAmount})`)
+        }
+      } catch (verifyErr) {
+        // Insurance portal unreachable — log and continue (don't block claim submission)
+        console.warn('Policy verification skipped (insurance portal unreachable):', verifyErr.message)
+        policyWarnings.push('Policy verification skipped — insurance portal unreachable at submission time')
+      }
+    }
+
+    // --- Build IPFS metadata bundle ---
     const metadataBundle = {
-      v: 1,
-      hospital: {
-        name: process.env.HOSPITAL_NAME,
-        code: process.env.HOSPITAL_CODE,
+      v: 2,
+      hospital: { name: process.env.HOSPITAL_NAME, code: process.env.HOSPITAL_CODE },
+      patient: claimData.patient,
+      admission: claimData.admission,
+      insurance: claimData.insurance,
+      medical: {
+        doctors,
+        diagnosis: claimData.medical.diagnosis,
+        icdCode: claimData.medical.icdCode,
+        procedures,
+        primaryProcedureCode: primaryProcedure.code,
+        totalClaimedAmount,
+        isTransferCase: claimData.medical.isTransferCase,
+        transferHospitalName: claimData.medical.transferHospitalName,
+        isPlannedSurgery: claimData.medical.isPlannedSurgery,
       },
-      patient: claimData.patient,        // { name, aadhaarLast4, panNumber, dateOfBirth, gender, bloodGroup, contactNumber, address }
-      admission: claimData.admission,    // { admissionDate, dischargeDate, contactNumber }
-      insurance: claimData.insurance,    // { company, policyNumber, policyType, ... }
-      medical: claimData.medical,        // { doctorName, department, diagnosis, icdCode, procedureCode, claimedAmount, ... }
-      documents: claimData.documents,   // [{ type, cid, fileName, fileSize }]
+      documents: claimData.documents,
       submittedBy: req.user.name,
       submittedAt: new Date().toISOString(),
     }
 
-    // Upload metadata bundle to IPFS
     const metadataBuffer = Buffer.from(JSON.stringify(metadataBundle))
-    const claimNumber = `claim-meta-${Date.now()}.json`
-    const metadataCid = await uploadToPinata(metadataBuffer, claimNumber, 'application/json')
+    const metadataCid = await uploadToPinata(metadataBuffer, `claim-meta-${Date.now()}.json`, 'application/json')
 
-    // Map document types to the 3 on-chain CID slots
-    const findCid = (type) => {
-      const doc = (claimData.documents || []).find(d => d.type === type)
-      return doc?.cid || ''
-    }
+    // --- Map document CID slots ---
+    const findCid = (type) => (claimData.documents || []).find(d => d.type === type)?.cid || ''
     const cidBill = findCid('insurance_card')
     const cidPrescription = findCid('consultation_papers')
-    // cidDischarge slot holds the full metadata bundle CID
     const cidDischarge = metadataCid
 
-    // TX2 — Submit to blockchain
+    // --- TX2: submit to blockchain ---
     const { txHash, blockchainClaimId } = await submitClaimToBlockchain({
       aadhaarHash,
-      procedureCode: claimData.medical.procedureCode,
-      claimedAmount: claimData.medical.claimedAmount,
+      procedureCode: primaryProcedure.code,
+      claimedAmount: totalClaimedAmount,
       cidBill,
       cidPrescription,
       cidDischarge,
     })
 
-    // Update patient's active policy info in DB if provided
+    // Update patient's known policy in local DB
     if (claimData.insurance?.policyNumber) {
       await Patient.findOneAndUpdate(
         { aadhaarHash },
-        {
-          activePolicyId: claimData.insurance.policyNumber,
-          activeInsuranceCompany: claimData.insurance.company,
-        }
+        { activePolicyId: claimData.insurance.policyNumber, activeInsuranceCompany: claimData.insurance.company }
       )
     }
 
@@ -216,6 +256,7 @@ router.post('/submit', async (req, res) => {
       txHash,
       metadataCid,
       ipfsUrl: ipfsGatewayUrl(metadataCid),
+      warnings: policyWarnings.length ? policyWarnings : undefined,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
