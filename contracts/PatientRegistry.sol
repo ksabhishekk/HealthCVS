@@ -12,8 +12,9 @@ import "./RoleManager.sol";
  *   client-side and sends only the hash. The raw number never touches the blockchain.
  *
  * The insurer calls registerPatient() once per patient, linking their
- * aadhaarHash ↔ wallet address ↔ policy ID. All subsequent contracts
- * look up patients by aadhaarHash.
+ * aadhaarHash ↔ policy ID. Wallet address is optional — patients may not have
+ * a crypto wallet at enrollment time. The insurer can assign or update it later
+ * via updateWallet() once the patient sets up the mobile app.
  */
 contract PatientRegistry {
     RoleManager public roleManager;
@@ -35,6 +36,7 @@ contract PatientRegistry {
         string policyId,
         uint256 timestamp
     );
+    event WalletUpdated(bytes32 indexed aadhaarHash, address indexed newWallet, uint256 timestamp);
     event PolicyUpdated(bytes32 indexed aadhaarHash, string newPolicyId, uint256 timestamp);
 
     constructor(address _roleManager) {
@@ -49,14 +51,13 @@ contract PatientRegistry {
         _;
     }
 
-    // TX 1: Insurer registers a patient on-chain
+    // TX 1: Insurer registers a patient on-chain. Wallet is optional.
     function registerPatient(
         bytes32 _aadhaarHash,
         address _wallet,
         string calldata _policyId
     ) external onlyInsurer {
         require(_aadhaarHash != bytes32(0), "PatientRegistry: invalid aadhaar hash");
-        require(_wallet != address(0), "PatientRegistry: invalid wallet");
         require(
             patients[_aadhaarHash].aadhaarHash == bytes32(0),
             "PatientRegistry: patient already registered"
@@ -70,9 +71,30 @@ contract PatientRegistry {
             registeredAt: block.timestamp
         });
 
-        walletToAadhaar[_wallet] = _aadhaarHash;
+        if (_wallet != address(0)) {
+            walletToAadhaar[_wallet] = _aadhaarHash;
+        }
 
         emit PatientRegistered(_aadhaarHash, _wallet, _policyId, block.timestamp);
+    }
+
+    // Insurer assigns or updates the patient's wallet address after registration
+    function updateWallet(
+        bytes32 _aadhaarHash,
+        address _newWallet
+    ) external onlyInsurer {
+        require(patients[_aadhaarHash].isActive, "PatientRegistry: patient not found");
+        require(_newWallet != address(0), "PatientRegistry: invalid wallet address");
+
+        address oldWallet = patients[_aadhaarHash].walletAddress;
+        if (oldWallet != address(0)) {
+            delete walletToAadhaar[oldWallet];
+        }
+
+        patients[_aadhaarHash].walletAddress = _newWallet;
+        walletToAadhaar[_newWallet] = _aadhaarHash;
+
+        emit WalletUpdated(_aadhaarHash, _newWallet, block.timestamp);
     }
 
     function updatePolicy(
