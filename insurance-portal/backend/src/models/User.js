@@ -5,8 +5,8 @@ const UserSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
   password: { type: String, required: true },
-  // Insurer roles: analyst reviews fraud scores, adjudicator runs TX5, reviewer does TX6, finance does TX7
-  role: { type: String, enum: ['admin', 'analyst', 'adjudicator', 'reviewer', 'finance'], default: 'analyst' },
+  // TX4 + TX5 are ML oracle hooks — only admin can trigger manually; TX6 = reviewer, TX7 = finance
+  role: { type: String, enum: ['admin', 'reviewer', 'finance'], default: 'reviewer' },
   department: { type: String, trim: true },
   employeeId: { type: String, trim: true },
   isActive: { type: Boolean, default: true },

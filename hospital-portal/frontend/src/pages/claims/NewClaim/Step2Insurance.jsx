@@ -192,7 +192,7 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
       {!ins._verified && (
         <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           <ShieldX className="w-4 h-4 shrink-0" />
-          Policy not verified yet. It is strongly recommended to verify before proceeding to avoid wasting gas on an invalid claim.
+          Policy not verified. Strongly recommended to verify before proceeding — unverified policies may be rejected during insurer review.
         </div>
       )}
 

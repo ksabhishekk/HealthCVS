@@ -14,8 +14,8 @@ const POLICY_TYPES = [
 ]
 
 export default function PatientEnrollment() {
-  const { hasRole } = useAuth()
-  const canEnroll = hasRole('admin', 'analyst')
+  const { isAdmin } = useAuth()
+  const canEnroll = isAdmin
 
   const [checkAadhaar, setCheckAadhaar] = useState('')
   const [checkResult, setCheckResult] = useState(null)
@@ -139,7 +139,7 @@ export default function PatientEnrollment() {
 
         {!canEnroll && (
           <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg text-sm mb-4">
-            Only <strong>Admin</strong> or <strong>Fraud Analyst</strong> roles can enroll patients.
+            Only <strong>Admin</strong> can enroll patients.
           </div>
         )}
 

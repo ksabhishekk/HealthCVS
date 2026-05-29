@@ -35,7 +35,7 @@ router.post('/',
   body('name').notEmpty().trim(),
   body('email').isEmail().normalizeEmail(),
   body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
-  body('role').isIn(['admin', 'analyst', 'adjudicator', 'reviewer', 'finance']),
+  body('role').isIn(['admin', 'reviewer', 'finance']),
   async (req, res) => {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() })

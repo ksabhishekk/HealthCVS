@@ -10,7 +10,7 @@ router.use(authenticate)
 
 // POST /api/patients/register — TX1: enroll policyholder on blockchain + save policy to MongoDB
 router.post('/register',
-  requireRole('admin', 'analyst'),
+  requireRole('admin'),
   body('aadhaarNumber').isLength({ min: 12, max: 12 }).isNumeric().withMessage('Aadhaar must be 12 digits'),
   body('policyId').notEmpty().trim().withMessage('Policy ID is required'),
   body('insuranceCompany').notEmpty().trim().withMessage('Insurance company is required'),
@@ -142,7 +142,7 @@ router.post('/check',
 
 // PATCH /api/patients/:aadhaarHash/wallet — assign or update patient wallet after registration
 router.patch('/:aadhaarHash/wallet',
-  requireRole('admin', 'analyst'),
+  requireRole('admin'),
   body('walletAddress').isEthereumAddress().withMessage('A valid Ethereum wallet address is required'),
   async (req, res) => {
     const errors = validationResult(req)
