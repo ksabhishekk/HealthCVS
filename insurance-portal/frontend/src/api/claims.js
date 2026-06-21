@@ -10,8 +10,8 @@ export const setFraudScore = (id, fraudScore) =>
 export const adjudicateClaim = (id) =>
   api.post(`/claims/${id}/adjudicate`)
 
-export const insurerReview = (id, approve) =>
-  api.post(`/claims/${id}/insurer-review`, { approve })
+export const insurerReview = (id, approve, notes = '') =>
+  api.post(`/claims/${id}/insurer-review`, { approve, reviewNotes: notes })
 
 export const settleClaim = (id) =>
   api.post(`/claims/${id}/settle`)

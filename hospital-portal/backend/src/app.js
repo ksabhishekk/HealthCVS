@@ -20,6 +20,9 @@ app.use('/api/patients', require('./routes/patients'))
 app.use('/api/claims', require('./routes/claims'))
 app.use('/api/documents', require('./routes/documents'))
 app.use('/api/staff', require('./routes/staff'))
+app.use('/api/doctors', require('./routes/doctors'))
+app.use('/api/procedures', require('./routes/procedures'))
+app.use('/api/insurance', require('./routes/insurance'))
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 

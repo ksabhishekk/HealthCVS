@@ -3,16 +3,24 @@ const ClaimSubmissionABI = require('../abis/ClaimSubmission.json')
 const PatientRegistryABI = require('../abis/PatientRegistry.json')
 const AutoAdjudicationABI = require('../abis/AutoAdjudication.json')
 
-let _provider, _wallet, _claimSubmission, _patientRegistry, _autoAdjudication
+let _provider, _wallet, _oracleWallet, _claimSubmission, _claimSubmissionOracle, _patientRegistry, _autoAdjudication
 
 const getContracts = () => {
   if (!_provider) {
     _provider = new ethers.JsonRpcProvider(process.env.AMOY_RPC_URL)
+
+    // Insurer wallet — holds INSURER_ROLE; used for TX1, TX5, TX6, TX7
     _wallet = new ethers.Wallet(process.env.INSURER_WALLET_PRIVATE_KEY, _provider)
+
+    // Oracle wallet — holds DEFAULT_ADMIN_ROLE; used for TX4 (fraud score)
+    // In production this is replaced by the ML model's dedicated signing key
+    const oracleKey = process.env.ORACLE_PRIVATE_KEY || process.env.INSURER_WALLET_PRIVATE_KEY
+    _oracleWallet = new ethers.Wallet(oracleKey, _provider)
 
     const csAddress = process.env.CLAIM_SUBMISSION_ADDRESS
     if (csAddress && csAddress !== '0x0000000000000000000000000000000000000000') {
       _claimSubmission = new ethers.Contract(csAddress, ClaimSubmissionABI, _wallet)
+      _claimSubmissionOracle = new ethers.Contract(csAddress, ClaimSubmissionABI, _oracleWallet)
     }
 
     const prAddress = process.env.PATIENT_REGISTRY_ADDRESS
@@ -25,7 +33,7 @@ const getContracts = () => {
       _autoAdjudication = new ethers.Contract(aaAddress, AutoAdjudicationABI, _wallet)
     }
   }
-  return { provider: _provider, wallet: _wallet, claimSubmission: _claimSubmission, patientRegistry: _patientRegistry, autoAdjudication: _autoAdjudication }
+  return { provider: _provider, wallet: _wallet, claimSubmission: _claimSubmission, claimSubmissionOracle: _claimSubmissionOracle, patientRegistry: _patientRegistry, autoAdjudication: _autoAdjudication }
 }
 
 // TX1 — Register patient on-chain (INSURER_ROLE required)
@@ -47,13 +55,13 @@ const updatePatientWalletOnBlockchain = async (aadhaarHash, walletAddress) => {
   return { txHash: receipt.hash }
 }
 
-// TX4 — Write fraud score on-chain
-// ML model integration point: when model is ready, call this endpoint with its output score.
+// TX4 — Write fraud score on-chain using oracle wallet (DEFAULT_ADMIN_ROLE)
+// ML model integration point: replace ORACLE_PRIVATE_KEY with model's signing key when ready
 const updateFraudScoreOnBlockchain = async (claimId, score) => {
-  const { claimSubmission } = getContracts()
-  if (!claimSubmission) throw new Error('ClaimSubmission contract not deployed')
+  const { claimSubmissionOracle } = getContracts()
+  if (!claimSubmissionOracle) throw new Error('ClaimSubmission contract not deployed')
   if (score < 0 || score > 100) throw new Error('Fraud score must be 0–100')
-  const tx = await claimSubmission.updateFraudScore(BigInt(claimId), BigInt(score))
+  const tx = await claimSubmissionOracle.updateFraudScore(BigInt(claimId), BigInt(score))
   const receipt = await tx.wait()
   return { txHash: receipt.hash }
 }

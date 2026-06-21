@@ -1,130 +1,265 @@
-const PMJAY_CODES = [
-  { code: 'S030008', label: 'Cataract Surgery', ceiling: 10000 },
-  { code: 'S040001', label: 'Tonsillectomy', ceiling: 15000 },
-  { code: 'S050002', label: 'Appendectomy', ceiling: 20000 },
-  { code: 'S060001', label: 'Hernia Repair', ceiling: 25000 },
-  { code: 'S060002', label: 'Cholecystectomy (Gallbladder)', ceiling: 30000 },
-  { code: 'S060003', label: 'Hysterectomy', ceiling: 35000 },
-  { code: 'S060004', label: 'C-Section Delivery', ceiling: 25000 },
-  { code: 'S060005', label: 'Knee Replacement', ceiling: 80000 },
-  { code: 'S060006', label: 'Hip Replacement', ceiling: 90000 },
-  { code: 'S070001', label: 'Coronary Artery Bypass (CABG)', ceiling: 100000 },
-]
-
-const DEPARTMENTS = [
-  'General Medicine', 'General Surgery', 'Cardiology', 'Orthopaedics',
-  'Neurology', 'Gynaecology & Obstetrics', 'Paediatrics', 'Ophthalmology',
-  'ENT', 'Urology', 'Nephrology', 'Oncology', 'Pulmonology', 'Gastroenterology',
-  'Endocrinology', 'Dermatology', 'Psychiatry', 'Radiology', 'Anaesthesiology',
-]
+import { useEffect, useState } from 'react'
+import { Plus, X, Loader2, AlertCircle, UserRound, Stethoscope } from 'lucide-react'
+import { getDoctors } from '../../../api/doctors'
+import { getProcedures } from '../../../api/procedures'
 
 const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
 
 export default function Step3Medical({ data, update, onNext, onBack }) {
   const med = data.medical
-  const set = (k, v) => update({ medical: { ...med, [k]: v } })
+  const setMed = (patch) => update({ medical: { ...med, ...patch } })
 
-  const selectedCode = PMJAY_CODES.find(p => p.code === med.procedureCode)
-  const amountExceedsCeiling = selectedCode && Number(med.claimedAmount) > selectedCode.ceiling
+  const [doctors, setDoctors] = useState([])
+  const [procedures, setProcedures] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
-  const canProceed = med.doctorName && med.department && med.diagnosis &&
-    med.procedureCode && med.claimedAmount &&
+  useEffect(() => {
+    Promise.all([getDoctors(), getProcedures()])
+      .then(([dRes, pRes]) => {
+        setDoctors(dRes.data.doctors || [])
+        setProcedures(pRes.data.procedures || [])
+      })
+      .catch(() => setLoadError('Failed to load hospital catalog. Please refresh.'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  // --- Doctor helpers ---
+  const addDoctor = () => {
+    setMed({ doctors: [...med.doctors, { id: '', name: '', department: '', specialization: '' }] })
+  }
+  const updateDoctor = (i, doctorId) => {
+    const found = doctors.find(d => d._id === doctorId)
+    const updated = med.doctors.map((d, idx) =>
+      idx === i ? (found ? { id: found._id, name: found.name, department: found.department, specialization: found.specialization || '' } : { id: '', name: '', department: '', specialization: '' }) : d
+    )
+    setMed({ doctors: updated })
+  }
+  const removeDoctor = (i) => setMed({ doctors: med.doctors.filter((_, idx) => idx !== i) })
+
+  // --- Procedure helpers ---
+  const addProcedure = () => {
+    setMed({ procedures: [...med.procedures, { code: '', name: '', claimedAmount: '' }] })
+  }
+  const updateProcedureField = (i, field, value) => {
+    const updated = med.procedures.map((p, idx) => idx === i ? { ...p, [field]: value } : p)
+    setMed({ procedures: updated })
+  }
+  const selectProcedure = (i, code) => {
+    const found = procedures.find(p => p.code === code)
+    const updated = med.procedures.map((p, idx) =>
+      idx === i ? (found ? { code: found.code, name: found.name, claimedAmount: String(found.ceilingAmount || '') } : { code: '', name: '', claimedAmount: '' }) : p
+    )
+    setMed({ procedures: updated })
+  }
+  const removeProcedure = (i) => setMed({ procedures: med.procedures.filter((_, idx) => idx !== i) })
+
+  const totalAmount = med.procedures.reduce((s, p) => s + (Number(p.claimedAmount) || 0), 0)
+
+  // Already-selected doctor IDs (to prevent duplicate picks)
+  const selectedDoctorIds = med.doctors.map(d => d.id).filter(Boolean)
+  const selectedProcedureCodes = med.procedures.map(p => p.code).filter(Boolean)
+
+  const canProceed =
+    med.doctors.length > 0 && med.doctors.every(d => d.id) &&
+    med.diagnosis.trim() &&
+    med.procedures.length > 0 && med.procedures.every(p => p.code && Number(p.claimedAmount) > 0) &&
     (!med.isTransferCase || med.transferHospitalName)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-gray-400">
+        <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading hospital catalog…
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+        <AlertCircle className="w-4 h-4" /> {loadError}
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-2xl space-y-5">
+      {/* Doctors */}
       <div className="card p-5">
-        <h3 className="font-semibold text-gray-900 mb-4">Medical Details</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+            <UserRound className="w-4 h-4 text-gray-500" /> Treating Doctors <span className="text-red-500">*</span>
+          </h3>
+          <button type="button" onClick={addDoctor} className="btn-secondary text-xs py-1.5"
+            disabled={doctors.length === 0}>
+            <Plus className="w-3 h-3" /> Add Doctor
+          </button>
+        </div>
+
+        {doctors.length === 0 && (
+          <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            No doctors configured in the hospital system yet. Ask an admin to add doctors via the Doctors management page.
+          </div>
+        )}
+
+        {med.doctors.length === 0 && doctors.length > 0 && (
+          <p className="text-sm text-gray-400 italic">No doctors added yet. Click "Add Doctor".</p>
+        )}
+
+        <div className="space-y-3">
+          {med.doctors.map((d, i) => {
+            const availableForThis = doctors.filter(doc => !selectedDoctorIds.includes(doc._id) || doc._id === d.id)
+            return (
+              <div key={i} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex-1">
+                  <select
+                    className="input text-sm"
+                    value={d.id}
+                    onChange={e => updateDoctor(i, e.target.value)}
+                  >
+                    <option value="">Select doctor…</option>
+                    {availableForThis.map(doc => (
+                      <option key={doc._id} value={doc._id}>
+                        {doc.name} — {doc.department}{doc.specialization ? ` (${doc.specialization})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {d.name && (
+                    <p className="text-xs text-gray-500 mt-1">{d.department}{d.specialization ? ` · ${d.specialization}` : ''}</p>
+                  )}
+                </div>
+                <button type="button" onClick={() => removeDoctor(i)} className="text-gray-400 hover:text-red-500 mt-1.5">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Diagnosis */}
+      <div className="card p-5">
+        <h3 className="font-semibold text-gray-900 mb-4">Diagnosis</h3>
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="label">Doctor Name <span className="text-red-500">*</span></label>
-            <input className="input" value={med.doctorName} onChange={e => set('doctorName', e.target.value)}
-              placeholder="Dr. Full Name" />
-          </div>
-          <div>
-            <label className="label">Department <span className="text-red-500">*</span></label>
-            <select className="input" value={med.department} onChange={e => set('department', e.target.value)}>
-              <option value="">Select department</option>
-              {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </div>
           <div className="col-span-2">
             <label className="label">Diagnosis / Chief Complaint <span className="text-red-500">*</span></label>
-            <textarea className="input resize-none h-20" value={med.diagnosis} onChange={e => set('diagnosis', e.target.value)}
-              placeholder="Primary diagnosis / chief complaint" />
+            <textarea className="input resize-none h-20" value={med.diagnosis}
+              onChange={e => setMed({ diagnosis: e.target.value })}
+              placeholder="Primary diagnosis or chief complaint" />
           </div>
           <div>
             <label className="label">ICD-10 Code</label>
-            <input className="input font-mono uppercase" value={med.icdCode} onChange={e => set('icdCode', e.target.value.toUpperCase())}
-              placeholder="e.g. I21" />
+            <input className="input font-mono uppercase" value={med.icdCode}
+              onChange={e => setMed({ icdCode: e.target.value.toUpperCase() })}
+              placeholder="e.g. I21, K35" />
           </div>
         </div>
       </div>
 
-      {/* PM-JAY Procedure */}
+      {/* Procedures */}
       <div className="card p-5">
-        <h3 className="font-semibold text-gray-900 mb-4">PM-JAY Procedure Code <span className="text-red-500">*</span></h3>
-        <div className="space-y-2 mb-4">
-          {PMJAY_CODES.map(p => (
-            <label key={p.code} className={`flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-colors ${med.procedureCode === p.code ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
-              <div className="flex items-center gap-3">
-                <input type="radio" className="accent-blue-600" checked={med.procedureCode === p.code}
-                  onChange={() => update({ medical: { ...med, procedureCode: p.code, claimedAmount: String(p.ceiling) } })} />
-                <span className="font-mono text-xs text-gray-500 w-20">{p.code}</span>
-                <span className="text-sm">{p.label}</span>
-              </div>
-              <span className="text-xs text-gray-500">Ceiling: {fmt(p.ceiling)}</span>
-            </label>
-          ))}
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+            <Stethoscope className="w-4 h-4 text-gray-500" /> Procedures / Treatments <span className="text-red-500">*</span>
+          </h3>
+          <button type="button" onClick={addProcedure} className="btn-secondary text-xs py-1.5"
+            disabled={procedures.length === 0}>
+            <Plus className="w-3 h-3" /> Add Procedure
+          </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="label">Claimed Amount (₹) <span className="text-red-500">*</span></label>
-            <input type="number" className="input" value={med.claimedAmount}
-              onChange={e => set('claimedAmount', e.target.value)} min={1} />
-            {amountExceedsCeiling && (
-              <p className="text-xs text-amber-600 mt-1">
-                Exceeds PM-JAY ceiling of {fmt(selectedCode.ceiling)} — may require justification.
-              </p>
-            )}
+        {procedures.length === 0 && (
+          <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            No procedures configured in the hospital system yet. Ask an admin to add procedures via the Procedures management page.
           </div>
+        )}
+
+        {med.procedures.length === 0 && procedures.length > 0 && (
+          <p className="text-sm text-gray-400 italic">No procedures added yet. Click "Add Procedure".</p>
+        )}
+
+        <div className="space-y-3">
+          {med.procedures.map((p, i) => {
+            const availableForThis = procedures.filter(proc => !selectedProcedureCodes.includes(proc.code) || proc.code === p.code)
+            const ceilingForThis = procedures.find(proc => proc.code === p.code)?.ceilingAmount
+            const exceedsCeiling = ceilingForThis && Number(p.claimedAmount) > ceilingForThis
+            return (
+              <div key={i} className="p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 space-y-2">
+                    <select
+                      className="input text-sm"
+                      value={p.code}
+                      onChange={e => selectProcedure(i, e.target.value)}
+                    >
+                      <option value="">Select procedure…</option>
+                      {availableForThis.map(proc => (
+                        <option key={proc.code} value={proc.code}>
+                          {proc.code} — {proc.name}{proc.ceilingAmount ? ` (Ceiling: ${fmt(proc.ceilingAmount)})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <div>
+                      <input
+                        type="number"
+                        className="input text-sm"
+                        placeholder="Claimed amount (₹)"
+                        value={p.claimedAmount}
+                        min={1}
+                        onChange={e => updateProcedureField(i, 'claimedAmount', e.target.value)}
+                      />
+                      {exceedsCeiling && (
+                        <p className="text-xs text-amber-600 mt-1">
+                          Exceeds ceiling of {fmt(ceilingForThis)} — may require justification.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => removeProcedure(i)} className="text-gray-400 hover:text-red-500 mt-1.5">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
         </div>
+
+        {med.procedures.length > 0 && (
+          <div className="mt-4 pt-3 border-t flex justify-between items-center">
+            <span className="text-sm text-gray-500">Total Claimed Amount</span>
+            <span className="text-base font-bold text-gray-900">{fmt(totalAmount)}</span>
+          </div>
+        )}
       </div>
 
       {/* Flags */}
       <div className="card p-5">
         <h3 className="font-semibold text-gray-900 mb-4">Additional Flags</h3>
         <div className="space-y-4">
-          <div>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" className="rounded accent-blue-600 w-4 h-4"
-                checked={med.isTransferCase} onChange={e => set('isTransferCase', e.target.checked)} />
-              <div>
-                <div className="text-sm font-medium">Transfer Case</div>
-                <div className="text-xs text-gray-500">Patient was transferred from another hospital</div>
-              </div>
-            </label>
-            {med.isTransferCase && (
-              <div className="mt-3 ml-7">
-                <label className="label">Transferring Hospital Name <span className="text-red-500">*</span></label>
-                <input className="input" value={med.transferHospitalName}
-                  onChange={e => set('transferHospitalName', e.target.value)}
-                  placeholder="Name of referring hospital" />
-              </div>
-            )}
-          </div>
-
-          <div>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" className="rounded accent-blue-600 w-4 h-4"
-                checked={med.isPlannedSurgery} onChange={e => set('isPlannedSurgery', e.target.checked)} />
-              <div>
-                <div className="text-sm font-medium">Planned Surgery</div>
-                <div className="text-xs text-gray-500">Pre-authorized elective procedure (estimate copy required)</div>
-              </div>
-            </label>
-          </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" className="rounded accent-blue-600 w-4 h-4"
+              checked={med.isTransferCase} onChange={e => setMed({ isTransferCase: e.target.checked })} />
+            <div>
+              <div className="text-sm font-medium">Transfer Case</div>
+              <div className="text-xs text-gray-500">Patient was transferred from another hospital</div>
+            </div>
+          </label>
+          {med.isTransferCase && (
+            <div className="ml-7">
+              <label className="label">Transferring Hospital Name <span className="text-red-500">*</span></label>
+              <input className="input" value={med.transferHospitalName}
+                onChange={e => setMed({ transferHospitalName: e.target.value })}
+                placeholder="Name of referring hospital" />
+            </div>
+          )}
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" className="rounded accent-blue-600 w-4 h-4"
+              checked={med.isPlannedSurgery} onChange={e => setMed({ isPlannedSurgery: e.target.checked })} />
+            <div>
+              <div className="text-sm font-medium">Planned Surgery</div>
+              <div className="text-xs text-gray-500">Pre-authorized elective procedure (estimate copy required)</div>
+            </div>
+          </label>
         </div>
       </div>
 

@@ -138,10 +138,10 @@ router.get('/:id', async (req, res) => {
   }
 })
 
-// POST /api/claims/:id/fraud-score — TX4: write fraud score on-chain (analyst)
-// ML model integration point: pipe model output score into this endpoint when ready
+// POST /api/claims/:id/fraud-score — TX4: ML oracle writes fraud score on-chain
+// Production: ML model pipes score here automatically; admin can trigger manually for testing
 router.post('/:id/fraud-score',
-  requireRole('admin', 'analyst'),
+  requireRole('admin'),
   async (req, res) => {
     try {
       const { fraudScore } = req.body
@@ -159,9 +159,10 @@ router.post('/:id/fraud-score',
   }
 )
 
-// POST /api/claims/:id/adjudicate — TX5: automated adjudication (adjudicator)
+// POST /api/claims/:id/adjudicate — TX5: run AutoAdjudication smart contract
+// Production: triggered automatically after TX4; admin can trigger manually for testing
 router.post('/:id/adjudicate',
-  requireRole('admin', 'adjudicator'),
+  requireRole('admin'),
   async (req, res) => {
     try {
       const result = await adjudicateClaimOnBlockchain(Number(req.params.id))
@@ -177,12 +178,12 @@ router.post('/:id/insurer-review',
   requireRole('admin', 'reviewer'),
   async (req, res) => {
     try {
-      const { approve } = req.body
+      const { approve, reviewNotes } = req.body
       if (approve === undefined || approve === null) {
         return res.status(400).json({ error: 'approve (true/false) is required' })
       }
       const { txHash, approved } = await insurerReviewOnBlockchain(Number(req.params.id), Boolean(approve))
-      res.json({ success: true, txHash, approved })
+      res.json({ success: true, txHash, approved, reviewNotes: reviewNotes || '' })
     } catch (err) {
       res.status(500).json({ error: err.message })
     }

@@ -1,20 +1,15 @@
-export default function StatsCard({ label, value, icon: Icon, color = 'emerald', sub }) {
-  const colors = {
-    emerald: 'bg-emerald-50 text-emerald-600',
-    blue:    'bg-blue-50 text-blue-600',
-    yellow:  'bg-yellow-50 text-yellow-600',
-    red:     'bg-red-50 text-red-600',
-    purple:  'bg-purple-50 text-purple-600',
-    orange:  'bg-orange-50 text-orange-600',
+export default function StatsCard({ label, value, color = 'emerald', sub }) {
+  const borders = {
+    emerald: 'border-l-emerald-500',
+    blue:    'border-l-blue-500',
+    yellow:  'border-l-yellow-500',
+    red:     'border-l-red-500',
+    purple:  'border-l-purple-500',
+    orange:  'border-l-orange-500',
   }
   return (
-    <div className="card p-5">
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm text-gray-500 font-medium">{label}</span>
-        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${colors[color] || colors.emerald}`}>
-          <Icon className="w-5 h-5" />
-        </div>
-      </div>
+    <div className={`card p-5 border-l-4 ${borders[color] || borders.emerald}`}>
+      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{label}</div>
       <div className="text-2xl font-bold text-gray-900">{value ?? '—'}</div>
       {sub && <div className="text-xs text-gray-400 mt-1">{sub}</div>}
     </div>

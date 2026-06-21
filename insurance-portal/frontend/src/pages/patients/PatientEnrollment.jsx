@@ -4,20 +4,39 @@ import { registerPatient, checkPatient } from '../../api/patients'
 import { useAuth } from '../../context/AuthContext'
 
 const shortenHash = (h) => h ? `${h.slice(0, 10)}…${h.slice(-8)}` : '—'
+const fmt = (n) => n ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n) : '—'
+
+const POLICY_TYPES = [
+  { value: 'individual',     label: 'Individual' },
+  { value: 'family_floater', label: 'Family Floater' },
+  { value: 'corporate',      label: 'Corporate / Group' },
+  { value: 'government',     label: 'Government Scheme (PM-JAY etc.)' },
+]
 
 export default function PatientEnrollment() {
-  const { hasRole } = useAuth()
-  const canEnroll = hasRole('admin', 'analyst')
+  const { isAdmin } = useAuth()
+  const canEnroll = isAdmin
 
   const [checkAadhaar, setCheckAadhaar] = useState('')
   const [checkResult, setCheckResult] = useState(null)
   const [checking, setChecking] = useState(false)
   const [checkError, setCheckError] = useState('')
 
-  const [form, setForm] = useState({ aadhaarNumber: '', policyId: '', walletAddress: '' })
+  const [form, setForm] = useState({
+    aadhaarNumber: '',
+    policyId: '',
+    insuranceCompany: '',
+    policyType: '',
+    coverageAmount: '',
+    expiryDate: '',
+    walletAddress: '',
+    notes: '',
+  })
   const [enrolling, setEnrolling] = useState(false)
   const [txHash, setTxHash] = useState(null)
   const [enrollError, setEnrollError] = useState('')
+
+  const setField = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
   const handleCheck = async (e) => {
     e.preventDefault()
@@ -46,7 +65,7 @@ export default function PatientEnrollment() {
     try {
       const { data } = await registerPatient(form)
       setTxHash(data.txHash)
-      setForm({ aadhaarNumber: '', policyId: '', walletAddress: '' })
+      setForm({ aadhaarNumber: '', policyId: '', insuranceCompany: '', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '' })
     } catch (err) {
       const data = err.response?.data
       setEnrollError(data?.error || data?.errors?.[0]?.msg || err.message || 'Enrollment failed')
@@ -90,20 +109,20 @@ export default function PatientEnrollment() {
           <div className={`mt-4 p-4 rounded-lg border ${checkResult.isActive ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
             <div className="flex items-center gap-2 text-sm font-medium mb-2">
               {checkResult.isActive
-                ? <><CheckCircle className="w-4 h-4 text-green-600" /> <span className="text-green-700">Patient is registered and active</span></>
-                : <><AlertTriangle className="w-4 h-4 text-yellow-600" /> <span className="text-yellow-700">Patient not registered on blockchain</span></>
+                ? <><CheckCircle className="w-4 h-4 text-green-600" /> <span className="text-green-700">Registered and active</span></>
+                : <><AlertTriangle className="w-4 h-4 text-yellow-600" /> <span className="text-yellow-700">Not registered on blockchain</span></>
               }
             </div>
-            <div className="space-y-1 text-xs text-gray-600">
-              <div>Aadhaar Hash: <span className="font-mono">{shortenHash(checkResult.aadhaarHash)}</span></div>
-              {checkResult.isActive && <>
+            {checkResult.isActive && (
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600 mt-2">
+                <div>Hash: <span className="font-mono">{shortenHash(checkResult.aadhaarHash)}</span></div>
                 <div>Policy ID: <span className="font-medium">{checkResult.policyId || '—'}</span></div>
-                <div>Wallet: <span className="font-mono">{checkResult.walletAddress}</span></div>
-                {checkResult.registeredAt && (
-                  <div>Registered: {new Date(checkResult.registeredAt).toLocaleString('en-IN')}</div>
-                )}
-              </>}
-            </div>
+                <div>Company: <span className="font-medium">{checkResult.insuranceCompany || '—'}</span></div>
+                <div>Type: <span className="font-medium capitalize">{checkResult.policyType?.replace('_', ' ') || '—'}</span></div>
+                <div>Coverage: <span className="font-medium">{fmt(checkResult.coverageAmount)}</span></div>
+                <div>Expiry: <span className="font-medium">{checkResult.expiryDate ? new Date(checkResult.expiryDate).toLocaleDateString('en-IN') : '—'}</span></div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -115,12 +134,12 @@ export default function PatientEnrollment() {
           Register New Policyholder
         </h2>
         <p className="text-xs text-gray-500 mb-5">
-          This writes TX1 on-chain. The hospital cannot file claims for this patient until registration is complete.
+          Writes TX1 on-chain. Policy details are stored in insurer database — not on-chain (cost + privacy).
         </p>
 
         {!canEnroll && (
           <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg text-sm mb-4">
-            Only <strong>Admin</strong> or <strong>Fraud Analyst</strong> roles can enroll patients.
+            Only <strong>Admin</strong> can enroll patients.
           </div>
         )}
 
@@ -142,45 +161,90 @@ export default function PatientEnrollment() {
         )}
 
         <form onSubmit={handleEnroll} className="space-y-4">
-          <div>
-            <label className="label">Aadhaar Number <span className="text-red-500">*</span></label>
-            <input
-              type="text"
-              className="input"
-              placeholder="12-digit Aadhaar number"
-              value={form.aadhaarNumber}
-              onChange={e => setForm({ ...form, aadhaarNumber: e.target.value.replace(/\D/g, '').slice(0, 12) })}
-              maxLength={12}
-              required
-              disabled={!canEnroll}
-            />
-            <p className="text-xs text-gray-400 mt-1">Hashed with keccak256 before storing on-chain. Never stored in plain text.</p>
+          {/* Identity */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="label">Aadhaar Number <span className="text-red-500">*</span></label>
+              <input
+                type="text" className="input font-mono"
+                placeholder="12-digit Aadhaar number"
+                value={form.aadhaarNumber}
+                onChange={e => setField('aadhaarNumber', e.target.value.replace(/\D/g, '').slice(0, 12))}
+                maxLength={12} required disabled={!canEnroll}
+              />
+              <p className="text-xs text-gray-400 mt-1">Hashed with keccak256 before storing on-chain. Never stored in plain text.</p>
+            </div>
           </div>
 
-          <div>
-            <label className="label">Policy ID <span className="text-red-500">*</span></label>
-            <input
-              type="text"
-              className="input"
-              placeholder="e.g. PMJAY-2024-001234"
-              value={form.policyId}
-              onChange={e => setForm({ ...form, policyId: e.target.value })}
-              required
-              disabled={!canEnroll}
-            />
+          {/* Policy details */}
+          <div className="grid grid-cols-2 gap-4 pt-3 border-t">
+            <div className="col-span-2">
+              <label className="label">Insurance Company <span className="text-red-500">*</span></label>
+              <input type="text" className="input"
+                placeholder="e.g. Star Health Insurance"
+                value={form.insuranceCompany}
+                onChange={e => setField('insuranceCompany', e.target.value)}
+                required disabled={!canEnroll}
+              />
+            </div>
+            <div>
+              <label className="label">Policy ID <span className="text-red-500">*</span></label>
+              <input type="text" className="input"
+                placeholder="e.g. SHI-2024-001234"
+                value={form.policyId}
+                onChange={e => setField('policyId', e.target.value)}
+                required disabled={!canEnroll}
+              />
+            </div>
+            <div>
+              <label className="label">Policy Type <span className="text-red-500">*</span></label>
+              <select className="input" value={form.policyType}
+                onChange={e => setField('policyType', e.target.value)}
+                required disabled={!canEnroll}>
+                <option value="">Select type…</option>
+                {POLICY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Coverage Amount (₹) <span className="text-red-500">*</span></label>
+              <input type="number" className="input"
+                placeholder="e.g. 500000"
+                value={form.coverageAmount}
+                onChange={e => setField('coverageAmount', e.target.value)}
+                min={1} required disabled={!canEnroll}
+              />
+            </div>
+            <div>
+              <label className="label">Policy Expiry Date <span className="text-red-500">*</span></label>
+              <input type="date" className="input"
+                value={form.expiryDate}
+                onChange={e => setField('expiryDate', e.target.value)}
+                min={new Date().toISOString().split('T')[0]}
+                required disabled={!canEnroll}
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="label">Patient Wallet Address <span className="text-gray-400">(optional)</span></label>
-            <input
-              type="text"
-              className="input font-mono"
-              placeholder="0x… (can be assigned later)"
-              value={form.walletAddress}
-              onChange={e => setForm({ ...form, walletAddress: e.target.value })}
-              disabled={!canEnroll}
-            />
-            <p className="text-xs text-gray-400 mt-1">Leave blank if the patient doesn't have a wallet yet. Can be updated anytime.</p>
+          {/* Optional */}
+          <div className="grid grid-cols-1 gap-4 pt-3 border-t">
+            <div>
+              <label className="label">Patient Wallet Address <span className="text-gray-400">(optional)</span></label>
+              <input type="text" className="input font-mono"
+                placeholder="0x… (can be assigned later)"
+                value={form.walletAddress}
+                onChange={e => setField('walletAddress', e.target.value)}
+                disabled={!canEnroll}
+              />
+            </div>
+            <div>
+              <label className="label">Notes <span className="text-gray-400">(internal)</span></label>
+              <input type="text" className="input"
+                placeholder="Any internal notes"
+                value={form.notes}
+                onChange={e => setField('notes', e.target.value)}
+                disabled={!canEnroll}
+              />
+            </div>
           </div>
 
           <button
@@ -189,15 +253,9 @@ export default function PatientEnrollment() {
             disabled={enrolling || !canEnroll}
           >
             {enrolling ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Submitting TX1 to blockchain…
-              </>
+              <><Loader2 className="w-4 h-4 animate-spin" /> Submitting TX1 to blockchain…</>
             ) : (
-              <>
-                <UserPlus className="w-4 h-4" />
-                Enroll Patient (TX1)
-              </>
+              <><UserPlus className="w-4 h-4" /> Enroll Patient (TX1)</>
             )}
           </button>
         </form>

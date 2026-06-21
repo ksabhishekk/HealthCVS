@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { FileText, CheckCircle, Clock, AlertTriangle, XCircle, PlusCircle, ArrowRight } from 'lucide-react'
+import { PlusCircle, ArrowRight, TrendingUp } from 'lucide-react'
 import { getClaimStats, getClaims } from '../api/claims'
 import StatsCard from '../components/StatsCard'
 import ClaimStatusBadge from '../components/ClaimStatusBadge'
@@ -8,6 +8,10 @@ import { useAuth } from '../context/AuthContext'
 
 const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
 const fmtDate = (ts) => ts ? new Date(ts).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+
+const todayStr = () => new Date().toLocaleDateString('en-IN', {
+  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+})
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -24,10 +28,13 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      {/* Page header */}
+      <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Welcome back, {user?.name}</p>
+          <p className="text-sm text-gray-400 mt-0.5">
+            {todayStr()} &mdash; Welcome back, <span className="text-gray-600 font-medium">{user?.name}</span>
+          </p>
         </div>
         <Link to="/claims/new" className="btn-primary">
           <PlusCircle className="w-4 h-4" />
@@ -37,28 +44,31 @@ export default function Dashboard() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatsCard label="Total Claims" value={loading ? '…' : stats?.total} icon={FileText} color="blue" />
-        <StatsCard label="Settled" value={loading ? '…' : stats?.settled} icon={CheckCircle} color="green" />
-        <StatsCard label="Pending" value={loading ? '…' : stats?.pending} icon={Clock} color="yellow" />
-        <StatsCard label="Flagged / Rejected" value={loading ? '…' : (stats?.flagged + stats?.rejected)} icon={AlertTriangle} color="red" />
+        <StatsCard label="Total Claims"       value={loading ? '—' : stats?.total}                       color="blue" />
+        <StatsCard label="Settled"            value={loading ? '—' : stats?.settled}                     color="green" />
+        <StatsCard label="Pending Review"     value={loading ? '—' : stats?.pending}                     color="yellow" />
+        <StatsCard label="Flagged / Rejected" value={loading ? '—' : (stats?.flagged + stats?.rejected)} color="red" />
       </div>
 
       {/* Recent claims */}
       <div className="card">
-        <div className="flex items-center justify-between px-5 py-4 border-b">
-          <h2 className="font-semibold text-gray-900">Recent Claims</h2>
-          <Link to="/claims" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-gray-400" />
+            <h2 className="font-semibold text-gray-900 text-sm">Recent Claims</h2>
+          </div>
+          <Link to="/claims" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
             View all <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
 
         {loading ? (
-          <div className="p-8 text-center text-gray-400 text-sm">Loading…</div>
+          <div className="p-10 text-center text-gray-400 text-sm">Loading…</div>
         ) : recent.length === 0 ? (
-          <div className="p-8 text-center">
-            <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500 text-sm">No claims yet.</p>
-            <Link to="/claims/new" className="btn-primary mt-4 inline-flex">
+          <div className="p-10 text-center">
+            <FileText className="w-10 h-10 text-gray-200 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm mb-4">No claims submitted yet.</p>
+            <Link to="/claims/new" className="btn-primary inline-flex">
               <PlusCircle className="w-4 h-4" /> Submit First Claim
             </Link>
           </div>
@@ -66,27 +76,27 @@ export default function Dashboard() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-500 border-b bg-gray-50">
-                  <th className="px-5 py-3 font-medium">Claim ID</th>
-                  <th className="px-5 py-3 font-medium">Patient</th>
-                  <th className="px-5 py-3 font-medium">Procedure</th>
-                  <th className="px-5 py-3 font-medium">Amount</th>
-                  <th className="px-5 py-3 font-medium">Date</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
+                <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50/60">
+                  <th className="px-5 py-3 font-semibold tracking-wide">Claim ID</th>
+                  <th className="px-5 py-3 font-semibold tracking-wide">Patient</th>
+                  <th className="px-5 py-3 font-semibold tracking-wide">Procedure</th>
+                  <th className="px-5 py-3 font-semibold tracking-wide">Amount</th>
+                  <th className="px-5 py-3 font-semibold tracking-wide">Date</th>
+                  <th className="px-5 py-3 font-semibold tracking-wide">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {recent.map((c) => (
-                  <tr key={c.blockchainClaimId} className="hover:bg-gray-50 transition-colors">
+                  <tr key={c.blockchainClaimId} className="hover:bg-blue-50/30 transition-colors">
                     <td className="px-5 py-3">
-                      <Link to={`/claims/${c.blockchainClaimId}`} className="font-mono text-blue-600 hover:underline">
+                      <Link to={`/claims/${c.blockchainClaimId}`} className="font-mono text-blue-600 hover:underline text-xs">
                         #{c.blockchainClaimId}
                       </Link>
                     </td>
                     <td className="px-5 py-3 text-gray-700">{c.patientName || <span className="text-gray-400 italic">Unknown</span>}</td>
-                    <td className="px-5 py-3 font-mono text-xs text-gray-600">{c.procedureCode}</td>
-                    <td className="px-5 py-3 font-medium">{fmt(c.claimedAmount)}</td>
-                    <td className="px-5 py-3 text-gray-500">{fmtDate(c.createdAt)}</td>
+                    <td className="px-5 py-3 font-mono text-xs text-gray-500">{c.procedureCode}</td>
+                    <td className="px-5 py-3 font-medium text-gray-900">{fmt(c.claimedAmount)}</td>
+                    <td className="px-5 py-3 text-gray-400 text-xs">{fmtDate(c.createdAt)}</td>
                     <td className="px-5 py-3"><ClaimStatusBadge status={c.status} /></td>
                   </tr>
                 ))}

@@ -6,11 +6,9 @@ const mongoose = require('mongoose')
 const User = require('../src/models/User')
 
 const DEMO_USERS = [
-  { name: 'Insurer Admin',      email: 'admin@insurer.com',      password: 'Admin@1234',      role: 'admin',       department: 'Administration', employeeId: 'INS-ADM-001' },
-  { name: 'Fraud Analyst',      email: 'analyst@insurer.com',    password: 'Analyst@1234',    role: 'analyst',     department: 'Fraud Detection', employeeId: 'INS-ANL-001' },
-  { name: 'Claims Adjudicator', email: 'adjudicator@insurer.com',password: 'Adjudicate@1234', role: 'adjudicator', department: 'Claims',          employeeId: 'INS-ADJ-001' },
-  { name: 'Senior Reviewer',    email: 'reviewer@insurer.com',   password: 'Reviewer@1234',   role: 'reviewer',    department: 'Review Board',    employeeId: 'INS-REV-001' },
-  { name: 'Finance Officer',    email: 'finance@insurer.com',    password: 'Finance@1234',    role: 'finance',     department: 'Finance',         employeeId: 'INS-FIN-001' },
+  { name: 'Insurer Admin',   email: 'admin@insurer.com',    password: 'Admin@1234',    role: 'admin',    department: 'Administration', employeeId: 'INS-ADM-001' },
+  { name: 'Senior Reviewer', email: 'reviewer@insurer.com', password: 'Reviewer@1234', role: 'reviewer', department: 'Review Board',   employeeId: 'INS-REV-001' },
+  { name: 'Finance Officer', email: 'finance@insurer.com',  password: 'Finance@1234',  role: 'finance',  department: 'Finance',        employeeId: 'INS-FIN-001' },
 ]
 
 async function seed() {

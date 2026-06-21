@@ -2,22 +2,18 @@ import { useEffect, useState } from 'react'
 import { UserPlus, UserX, UserCheck, KeyRound, X, AlertCircle } from 'lucide-react'
 import { getStaff, createStaff, toggleActive, resetPassword } from '../../api/staff'
 
-const ROLES = ['admin', 'analyst', 'adjudicator', 'reviewer', 'finance']
+const ROLES = ['admin', 'reviewer', 'finance']
 
 const ROLE_LABELS = {
-  admin: 'Admin',
-  analyst: 'Fraud Analyst',
-  adjudicator: 'Adjudicator',
+  admin:    'Admin',
   reviewer: 'Senior Reviewer',
-  finance: 'Finance Officer',
+  finance:  'Finance Officer',
 }
 
 const ROLE_COLORS = {
-  admin:       'bg-purple-100 text-purple-700',
-  analyst:     'bg-blue-100 text-blue-700',
-  adjudicator: 'bg-yellow-100 text-yellow-700',
-  reviewer:    'bg-orange-100 text-orange-700',
-  finance:     'bg-green-100 text-green-700',
+  admin:    'bg-purple-100 text-purple-700',
+  reviewer: 'bg-orange-100 text-orange-700',
+  finance:  'bg-green-100 text-green-700',
 }
 
 function Modal({ title, onClose, children }) {
@@ -42,7 +38,7 @@ export default function StaffList() {
   const [newPassword, setNewPassword] = useState('')
   const [error, setError] = useState('')
 
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'analyst', department: '', employeeId: '' })
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'reviewer', department: '', employeeId: '' })
   const [saving, setSaving] = useState(false)
 
   const load = () => {
@@ -59,7 +55,7 @@ export default function StaffList() {
     try {
       await createStaff(form)
       setShowAdd(false)
-      setForm({ name: '', email: '', password: '', role: 'analyst', department: '', employeeId: '' })
+      setForm({ name: '', email: '', password: '', role: 'reviewer', department: '', employeeId: '' })
       load()
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to create staff member')

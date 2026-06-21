@@ -18,7 +18,7 @@ const STEPS = [
 
 const INITIAL = {
   // Step 1
-  patient: null,           // { _id, name, aadhaarLast4, ... }
+  patient: null,
   aadhaarHash: '',
   admission: { admissionDate: '', dischargeDate: '', contactNumber: '' },
 
@@ -27,18 +27,23 @@ const INITIAL = {
     company: '', policyNumber: '', policyType: '',
     isProposerDifferent: false, proposerName: '', proposerAadhaarLast4: '', proposerPan: '',
     employeeId: '', employerName: '',
+    // policy verification result (not sent to backend)
+    _verified: false, _coverageAmount: null, _expiryDate: null,
   },
 
-  // Step 3
+  // Step 3 — multi-doctor, multi-procedure
   medical: {
-    doctorName: '', department: '', diagnosis: '', icdCode: '',
-    procedureCode: '', claimedAmount: '',
-    isTransferCase: false, transferHospitalName: '',
+    doctors: [],      // [{ id, name, department, specialization }]
+    diagnosis: '',
+    icdCode: '',
+    procedures: [],   // [{ code, name, claimedAmount }]
+    isTransferCase: false,
+    transferHospitalName: '',
     isPlannedSurgery: false,
   },
 
   // Step 4
-  documents: [],   // [{ type, cid, fileName, fileSize }]
+  documents: [],
 }
 
 export default function NewClaim() {
@@ -57,6 +62,9 @@ export default function NewClaim() {
     setSubmitting(true)
     setError('')
     try {
+      // Strip internal _verified fields before sending
+      const { _verified, _coverageAmount, _expiryDate, ...insurance } = data.insurance
+
       const payload = {
         aadhaarHash: data.aadhaarHash || undefined,
         aadhaarNumber: data.aadhaarNumber || undefined,
@@ -71,12 +79,13 @@ export default function NewClaim() {
           address: data.patient?.address,
         },
         admission: data.admission,
-        insurance: data.insurance,
-        medical: { ...data.medical, claimedAmount: Number(data.medical.claimedAmount) },
+        insurance,
+        medical: data.medical,
         documents: data.documents,
       }
+
       const { data: result } = await submitClaim(payload)
-      navigate(`/claims/${result.blockchainClaimId}`, { state: { submitted: true, txHash: result.txHash } })
+      navigate(`/claims/${result.blockchainClaimId}`, { state: { submitted: true, txHash: result.txHash, warnings: result.warnings } })
     } catch (err) {
       setError(err.response?.data?.error || 'Submission failed. Check console for details.')
       setSubmitting(false)
@@ -117,7 +126,6 @@ export default function NewClaim() {
         ))}
       </div>
 
-      {/* Step content */}
       {step === 0 && <Step1Patient {...stepProps} />}
       {step === 1 && <Step2Insurance {...stepProps} />}
       {step === 2 && <Step3Medical {...stepProps} />}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { FileText, CheckCircle, Clock, AlertTriangle, XCircle, Gavel, ArrowRight } from 'lucide-react'
+import { FileText, ArrowRight, UserPlus } from 'lucide-react'
 import { getClaimStats, getClaims } from '../api/claims'
 import StatsCard from '../components/StatsCard'
 import ClaimStatusBadge from '../components/ClaimStatusBadge'
@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext'
 
 const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
 const fmtDate = (ts) => ts ? new Date(ts).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+const todayStr = () => new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -24,36 +25,36 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between pb-5 border-b border-gray-100 mb-6">
         <div>
           <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Welcome back, {user?.name}</p>
+          <p className="text-sm text-gray-500 mt-0.5">{todayStr()}</p>
         </div>
         <Link to="/patients/enroll" className="btn-primary">
-          <Gavel className="w-4 h-4" />
+          <UserPlus className="w-4 h-4" />
           Enroll Patient
         </Link>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatsCard label="Total Claims" value={loading ? '…' : stats?.total} icon={FileText} color="blue" />
-        <StatsCard label="Settled" value={loading ? '…' : stats?.settled} icon={CheckCircle} color="emerald" />
-        <StatsCard label="Pending Review" value={loading ? '…' : stats?.pending} icon={Clock} color="yellow" />
-        <StatsCard label="Flagged / Rejected" value={loading ? '…' : ((stats?.flagged ?? 0) + (stats?.rejected ?? 0))} icon={AlertTriangle} color="red" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <StatsCard label="Total Claims"      value={loading ? '…' : stats?.total}   color="blue" />
+        <StatsCard label="Settled"           value={loading ? '…' : stats?.settled} color="emerald" />
+        <StatsCard label="Pending Review"    value={loading ? '…' : stats?.pending} color="yellow" />
+        <StatsCard label="Flagged / Rejected" value={loading ? '…' : ((stats?.flagged ?? 0) + (stats?.rejected ?? 0))} color="red" />
       </div>
 
       {/* Pipeline breakdown */}
       {stats && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <StatsCard label="Submitted" value={stats.submitted} icon={FileText} color="blue" />
-          <StatsCard label="Doc Authenticated" value={stats.doctor_authenticated} icon={CheckCircle} color="blue" />
-          <StatsCard label="Fraud Scored" value={stats.fraud_scored} icon={AlertTriangle} color="purple" />
-          <StatsCard label="Adjudicated" value={stats.adjudicated} icon={Gavel} color="yellow" />
+          <StatsCard label="Submitted"         value={stats.submitted}           color="blue" />
+          <StatsCard label="Doc Authenticated" value={stats.doctor_authenticated} color="blue" />
+          <StatsCard label="Fraud Scored"      value={stats.fraud_scored}        color="purple" />
+          <StatsCard label="Adjudicated"       value={stats.adjudicated}         color="yellow" />
         </div>
       )}
 
       <div className="card">
-        <div className="flex items-center justify-between px-5 py-4 border-b">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="font-semibold text-gray-900">Recent Claims</h2>
           <Link to="/claims" className="text-sm text-emerald-600 hover:underline flex items-center gap-1">
             View all <ArrowRight className="w-3.5 h-3.5" />
