@@ -141,7 +141,7 @@ model = tf.keras.Model(inputs, outputs)
 def make_callbacks(suffix: str) -> list:
     return [
         tf.keras.callbacks.ModelCheckpoint(
-            f"forgery_detector_best_{suffix}.keras",
+            f"forgery_detector_best_{suffix}.h5",
             save_best_only=True,
             monitor="val_loss",
             verbose=1,
