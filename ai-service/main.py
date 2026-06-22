@@ -48,17 +48,24 @@ app = FastAPI(
     version="1.0.0",
 )
 
-MODEL_PATH = "forgery_detector.h5"
+# Prefer the best fine-tuned checkpoint (phase 2) if it exists,
+# then fall back to the final saved model.
+_CANDIDATE_PATHS = [
+    "forgery_detector_best_phase2.keras",
+    "forgery_detector_best_phase1.keras",
+    "forgery_detector.h5",
+]
+MODEL_PATH = next((p for p in _CANDIDATE_PATHS if os.path.exists(p)), None)
 
-# Load model at startup — fail fast if the file is missing
-if not os.path.exists(MODEL_PATH):
+if MODEL_PATH is None:
     raise RuntimeError(
-        f"Model file '{MODEL_PATH}' not found. "
-        "Please run train_model.py first to generate it."
+        "No model file found. Run train_model.py first to generate one."
     )
 
 model: tf.keras.Model = tf.keras.models.load_model(MODEL_PATH)
 print(f"✅ Model loaded from {MODEL_PATH}")
+# Class index assumption: genuine=0, tampered=1 (alphabetical from image_dataset_from_directory)
+# preds[1] is therefore the tampered probability.
 
 
 # ---------------------------------------------------------------------------
