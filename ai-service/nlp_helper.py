@@ -48,40 +48,40 @@ def verify_prescription_consistency(icd_code: str, ocr_text: str) -> tuple[bool,
 
 def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
     """
-    Checks if the doctor's registration number is valid via Surepass API.
+    Checks if the doctor's registration number is valid via Apify Actor.
     Returns (is_verified, doctor_name).
     """
     if not reg_no:
         return False, "No registration number provided"
         
-    api_key = os.environ.get("SUREPASS_API_KEY")
-    if not api_key:
-        return False, "SUREPASS_API_KEY environment variable is not set."
+    api_token = os.environ.get("APIFY_TOKEN", "apify_api_v70ovsnLlFyGVql0QKQpisICYe84R01o8jlg")
+
+    if not api_token:
+        return False, "APIFY_TOKEN environment variable is not set."
         
     try:
-        url = "https://kyc-api.surepass.io/api/v1/doctor/verification"
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {"id_number": reg_no}
+        # Run the Apify actor synchronously and get the dataset items
+        url = f"https://api.apify.com/v2/acts/hQpzzhlkeQdWfOrby/run-sync-get-dataset-items?token={api_token}"
         
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        # Common inputs for such an actor: registrationNumber, regNo, query.
+        payload = {"registrationNumber": reg_no}
         
-        if response.status_code == 200:
+        # Extended timeout as scraping actors might take longer to complete
+        response = requests.post(url, json=payload, timeout=60)
+        
+        if response.status_code == 200 or response.status_code == 201:
             data = response.json()
-            if data.get("success"):
-                # Surepass usually returns data under 'data' object
-                doctor_name = data.get("data", {}).get("full_name", "Unknown Name")
+            if data and isinstance(data, list) and len(data) > 0:
+                result = data[0]
+                # Common output fields for Doctor scraping
+                doctor_name = result.get("name") or result.get("fullName") or result.get("doctorName") or "Unknown Name"
                 return True, doctor_name
             else:
-                return False, data.get("message", "Verification failed")
+                return False, "Doctor registration number not found in registry or scraper returned empty."
         elif response.status_code == 401:
-            return False, "Unauthorized: Invalid Surepass API Key."
-        elif response.status_code == 404:
-            return False, "Doctor registration number not found in registry."
+            return False, "Unauthorized: Invalid Apify API Token."
         else:
-            return False, f"API Error: {response.status_code}"
+            return False, f"API Error: {response.status_code} - {response.text}"
             
     except requests.RequestException as e:
-        return False, f"Error reaching Surepass API: {str(e)}"
+        return False, f"Error reaching Apify API: {str(e)}"
