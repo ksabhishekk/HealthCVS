@@ -26,13 +26,22 @@ import shutil
 import uuid
 
 import numpy as np
-import tensorflow as tf
+from pydantic import BaseModel
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from explain_tabular import get_fraud_score, explain_prediction
+from nlp_helper import verify_prescription_consistency, verify_doctor_credentials
 from PIL import Image
-from tensorflow.keras.applications.efficientnet import preprocess_input  # CORRECTED
 
-from gradcam import make_gradcam_heatmap, overlay_heatmap
+try:
+    import tensorflow as tf
+    from tensorflow.keras.applications.efficientnet import preprocess_input
+    from gradcam import make_gradcam_heatmap, overlay_heatmap
+    TF_AVAILABLE = True
+except ModuleNotFoundError:
+    TF_AVAILABLE = False
+    print("[WARN] TensorFlow not found. Member A's endpoint will return mock data.")
+
 from ocr_helper import extract_text_from_image
 
 # ---------------------------------------------------------------------------
@@ -50,13 +59,15 @@ app = FastAPI(
 
 MODEL_PATH = "forgery_detector_best_phase2.keras"
 
-if not os.path.exists(MODEL_PATH):
-    raise RuntimeError(
-        f"No model file found at {MODEL_PATH}. Run train_model.py first to generate one."
-    )
-
-model: tf.keras.Model = tf.keras.models.load_model(MODEL_PATH)
-print(f"Model loaded from {MODEL_PATH}")
+if TF_AVAILABLE:
+    if not os.path.exists(MODEL_PATH):
+        print(f"[WARN] No model file found at {MODEL_PATH}.")
+        model = None
+    else:
+        model = tf.keras.models.load_model(MODEL_PATH)
+        print(f"Model loaded from {MODEL_PATH}")
+else:
+    model = None
 # Class index assumption: genuine=0, tampered=1 (alphabetical from image_dataset_from_directory)
 # preds[1] is therefore the tampered probability.
 
@@ -71,7 +82,23 @@ def _temp_path(filename: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Endpoint
+# Request Models
+# ---------------------------------------------------------------------------
+class TabularFraudRequest(BaseModel):
+    claimed_amount: float
+    market_ceiling: float
+    days_since_last_claim: int
+    hospital_type_private: int
+    num_claims_12months: int
+    hospital_rejection_rate: float
+
+class NLPValidateRequest(BaseModel):
+    icd_code: str
+    ocr_text: str
+    doctor_reg_no: str
+
+# ---------------------------------------------------------------------------
+# Endpoints
 # ---------------------------------------------------------------------------
 @app.post("/analyze-document")
 async def analyze_document(file: UploadFile = File(...)):
@@ -102,27 +129,29 @@ async def analyze_document(file: UploadFile = File(...)):
         except Exception as ocr_err:
             ocr_text = f"[OCR failed: {ocr_err}]"
 
-        # 3. Preprocessing — CORRECTED: use preprocess_input (not /255.0)
-        image = Image.open(temp_path).convert("RGB").resize((300, 300))
-        img_array = preprocess_input(
-            np.expand_dims(np.array(image, dtype=np.float32), axis=0)
-        )
-
-        # 4. Inference
-        preds = model.predict(img_array, verbose=0)[0]
-        tamper_prob = float(preds[1])  # index 1 = tampered class
-
-        # 5. Grad-CAM heatmap (only when suspicious)
+        # 3. Preprocessing & 4. Inference
         heatmap_path = None
-        if tamper_prob > 0.50:
-            try:
-                heatmap = make_gradcam_heatmap(img_array, model)
-                heatmap_filename = f"heatmap_{uuid.uuid4().hex[:8]}_{file.filename}"
-                heatmap_path = overlay_heatmap(temp_path, heatmap, heatmap_filename)
-            except Exception as cam_err:
-                # Heatmap failure is non-fatal; log and continue
-                print(f"[WARN] Grad-CAM failed: {cam_err}")
-                heatmap_path = None
+        if TF_AVAILABLE and model is not None:
+            image = Image.open(temp_path).convert("RGB").resize((300, 300))
+            img_array = preprocess_input(
+                np.expand_dims(np.array(image, dtype=np.float32), axis=0)
+            )
+            preds = model.predict(img_array, verbose=0)[0]
+            tamper_prob = float(preds[1])  # index 1 = tampered class
+            
+            # 5. Grad-CAM heatmap
+            if tamper_prob > 0.50:
+                try:
+                    heatmap = make_gradcam_heatmap(img_array, model)
+                    heatmap_filename = f"heatmap_{uuid.uuid4().hex[:8]}_{file.filename}"
+                    heatmap_path = overlay_heatmap(temp_path, heatmap, heatmap_filename)
+                except Exception as cam_err:
+                    print(f"[WARN] Grad-CAM failed: {cam_err}")
+                    heatmap_path = None
+        else:
+            # Mock response if TF is not available
+            tamper_prob = 0.75
+            heatmap_path = None
 
         return {
             "tamper_probability": round(tamper_prob * 100, 1),
@@ -149,6 +178,39 @@ async def get_heatmap(filename: str):
 async def health_check():
     """Simple liveness probe for Member C's integration."""
     return {"status": "ok", "model_loaded": True}
+
+
+@app.post("/predict/tabular-fraud")
+async def predict_tabular_fraud(req: TabularFraudRequest):
+    features_dict = {
+        "claimed_amount": req.claimed_amount,
+        "market_ceiling": req.market_ceiling,
+        "days_since_last_claim": req.days_since_last_claim,
+        "hospital_type_private": req.hospital_type_private,
+        "num_claims_12months": req.num_claims_12months,
+        "hospital_rejection_rate": req.hospital_rejection_rate,
+        "amount_ceiling_ratio": req.claimed_amount / req.market_ceiling if req.market_ceiling > 0 else 0.0
+    }
+    
+    score = get_fraud_score(features_dict)
+    explanations = explain_prediction(features_dict)
+    
+    return {
+        "tabular_fraud_score": round(score * 100, 2),
+        "shap_explanations": explanations
+    }
+
+@app.post("/predict/nlp-validate")
+async def predict_nlp_validate(req: NLPValidateRequest):
+    is_consistent, reason = verify_prescription_consistency(req.icd_code, req.ocr_text)
+    is_verified, doc_name = verify_doctor_credentials(req.doctor_reg_no)
+    
+    return {
+        "prescription_consistent": is_consistent,
+        "nlp_reason": reason,
+        "doctor_verified": is_verified,
+        "doctor_name": doc_name
+    }
 
 
 # ---------------------------------------------------------------------------
