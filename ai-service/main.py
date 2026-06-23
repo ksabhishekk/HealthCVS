@@ -202,12 +202,35 @@ async def predict_tabular_fraud(req: TabularFraudRequest):
 
 @app.post("/predict/nlp-validate")
 async def predict_nlp_validate(req: NLPValidateRequest):
-    is_consistent, reason = verify_prescription_consistency(req.icd_code, req.ocr_text)
-    is_verified, doc_name = verify_doctor_credentials(req.doctor_reg_no)
-    
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        icd_future = executor.submit(verify_prescription_consistency, req.icd_code, req.ocr_text)
+        doc_future = executor.submit(verify_doctor_credentials, req.doctor_reg_no)
+
+        # ICD check is fast (few seconds) — always wait for it
+        is_consistent, reason = icd_future.result(timeout=30)
+
+        # Doctor check takes 1-5 min (NMC scraper) — wait for full result
+        is_verified, doc_name = doc_future.result(timeout=360)
+
     return {
         "prescription_consistent": is_consistent,
         "nlp_reason": reason,
+        "doctor_verified": is_verified,
+        "doctor_name": doc_name
+    }
+
+
+class DoctorVerifyRequest(BaseModel):
+    doctor_reg_no: str
+
+
+@app.post("/verify-doctor")
+async def verify_doctor(req: DoctorVerifyRequest):
+    """Separate endpoint for doctor verification — may take 1-5 minutes as it scrapes the NMC registry."""
+    is_verified, doc_name = verify_doctor_credentials(req.doctor_reg_no)
+    return {
         "doctor_verified": is_verified,
         "doctor_name": doc_name
     }
