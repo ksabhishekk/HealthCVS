@@ -21,6 +21,7 @@ insurance-portal/backend/.env
 insurance-portal/frontend/.env
 
 # AI Service
+ai-service/.env
 ai-service/dataset/
 ai-service/*.h5
 ai-service/*_phase1.keras

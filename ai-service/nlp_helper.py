@@ -1,5 +1,8 @@
 import os
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def verify_prescription_consistency(icd_code: str, ocr_text: str) -> tuple[bool, str]:
     """
@@ -53,7 +56,7 @@ def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
     """
     if not reg_no:
         return False, "No registration number provided"
-    api_token = os.environ.get("apify_api_v70ovsnLlFyGVql0QKQpisICYe84R01o8jlg")
+    api_token = os.environ.get("APIFY_TOKEN")
 
     if not api_token:
         return False, "APIFY_TOKEN environment variable is not set."
