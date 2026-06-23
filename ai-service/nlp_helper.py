@@ -53,14 +53,14 @@ def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
     """
     if not reg_no:
         return False, "No registration number provided"
-    api_token = os.environ.get("API_TOKEN")
+    api_token = os.environ.get("apify_api_v70ovsnLlFyGVql0QKQpisICYe84R01o8jlg")
 
     if not api_token:
         return False, "APIFY_TOKEN environment variable is not set."
         
     try:
         # Run the Apify actor synchronously and get the dataset items
-        # url = f"https://api.apify.com/v2/acts/hQpzzhlkeQdWfOrby/run-sync-get-dataset-items?token={api_token}"
+        url = f"https://api.apify.com/v2/acts/hQpzzhlkeQdWfOrby/run-sync-get-dataset-items?token={api_token}"
         
         # Common inputs for such an actor: registrationNumber, regNo, query.
         payload = {"registrationNumber": reg_no}

@@ -35,12 +35,12 @@ from PIL import Image
 
 try:
     import tensorflow as tf
-    from tensorflow.keras.applications.efficientnet import preprocess_input
+    from keras.applications.efficientnet import preprocess_input
     from gradcam import make_gradcam_heatmap, overlay_heatmap
     TF_AVAILABLE = True
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     TF_AVAILABLE = False
-    print("[WARN] TensorFlow not found. Member A's endpoint will return mock data.")
+    print("[WARN] TensorFlow/Keras not found or failed to import. Member A's endpoint will return mock data.")
 
 from ocr_helper import extract_text_from_image
 
