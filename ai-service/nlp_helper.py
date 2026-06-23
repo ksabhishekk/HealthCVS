@@ -60,7 +60,7 @@ def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
         
     try:
         # Run the Apify actor synchronously and get the dataset items
-        url = f"https://api.apify.com/v2/acts/hQpzzhlkeQdWfOrby/run-sync-get-dataset-items?token={api_token}"
+        # url = f"https://api.apify.com/v2/acts/hQpzzhlkeQdWfOrby/run-sync-get-dataset-items?token={api_token}"
         
         # Common inputs for such an actor: registrationNumber, regNo, query.
         payload = {"registrationNumber": reg_no}
