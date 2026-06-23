@@ -53,8 +53,7 @@ def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
     """
     if not reg_no:
         return False, "No registration number provided"
-        
-    api_token = os.environ.get("APIFY_TOKEN", "apify_api_v70ovsnLlFyGVql0QKQpisICYe84R01o8jlg")
+    api_token = os.environ.get("")
 
     if not api_token:
         return False, "APIFY_TOKEN environment variable is not set."
