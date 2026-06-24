@@ -80,6 +80,11 @@ def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
     """
     if not reg_no:
         return False, "No registration number provided"
+
+    # Validate that the registration number contains only digits
+    if not reg_no.strip().isdigit():
+        return False, "Invalid registration number — must contain only digits."
+
     api_token = os.environ.get("APIFY_TOKEN")
 
     if not api_token:
