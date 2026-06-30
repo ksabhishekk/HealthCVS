@@ -3,11 +3,12 @@ import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle,
   Loader2, Bot, Gavel, BadgeCheck, Banknote, XCircle, ShieldAlert,
-  TrendingUp, ChevronRight, MessageSquare,
+  TrendingUp, ChevronRight, MessageSquare, Cpu,
 } from 'lucide-react'
-import { getClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim } from '../../api/claims'
+import { getClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim, triggerOracle, getClaimXai } from '../../api/claims'
 import ClaimStatusBadge from '../../components/ClaimStatusBadge'
 import { useAuth } from '../../context/AuthContext'
+import XaiPanel from '../../components/XaiPanel'
 
 const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
@@ -135,11 +136,20 @@ export default function ClaimDetail() {
   const [error, setError] = useState('')
   const [fraudInput, setFraudInput] = useState('')
   const [reviewNotes, setReviewNotes] = useState('')
+  const [xaiCid, setXaiCid] = useState(null)
+  const [oraclePending, setOraclePending] = useState(false)
 
   const load = () => {
     setLoading(true)
     getClaim(id).then(r => setClaim(r.data.claim)).finally(() => setLoading(false))
   }
+
+  // Fetch XAI CID from MongoDB oracle record
+  useEffect(() => {
+    getClaimXai(id)
+      .then(r => { if (r.data?.xai?.xaiCid) setXaiCid(r.data.xai.xaiCid) })
+      .catch(() => {})
+  }, [id])
 
   useEffect(() => { load() }, [id])
 
@@ -197,24 +207,25 @@ export default function ClaimDetail() {
         <div className="flex items-center gap-2">
           {s === 1 && canTx4 && (
             <div className="flex items-center gap-2">
-              <input
-                type="number" min="0" max="100"
-                placeholder="Score 0–100"
-                value={fraudInput}
-                onChange={e => setFraudInput(e.target.value)}
-                className="input w-36 py-1.5 text-sm"
-              />
+              {/* AI Oracle trigger — runs full pipeline and auto-writes TX4 */}
               <button
-                className="btn-primary"
-                disabled={actionLoading}
-                onClick={() => {
-                  const score = Number(fraudInput)
-                  if (isNaN(score) || score < 0 || score > 100) { setError('Enter a fraud score between 0 and 100'); return }
-                  runAction('Fraud score written', () => setFraudScore(id, score))
+                className="btn-primary bg-purple-600 hover:bg-purple-700"
+                disabled={actionLoading || oraclePending}
+                onClick={async () => {
+                  setOraclePending(true)
+                  setError('')
+                  try {
+                    await triggerOracle(id)
+                    alert('Oracle pipeline started! The AI will score this claim in ~1-5 minutes. Refresh the page after.')
+                  } catch (e) {
+                    setError(e.response?.data?.error || 'Oracle trigger failed')
+                  } finally {
+                    setOraclePending(false)
+                  }
                 }}
               >
-                {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bot className="w-4 h-4" />}
-                {actionLoading ? 'Processing…' : 'Write Score (TX4)'}
+                {oraclePending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
+                {oraclePending ? 'Queued…' : 'Run AI Oracle'}
               </button>
             </div>
           )}
@@ -246,6 +257,17 @@ export default function ClaimDetail() {
       )}
       <TxBanner tx={lastTx} label={lastTxLabel} notes={lastTxNotes} />
 
+      {/* Insurer Review Notes / Rejection Reason */}
+      {claim.reviewNotes && (
+        <div className={`border px-4 py-3.5 rounded-lg mb-5 text-sm flex items-start gap-2.5 ${s === 7 ? 'bg-red-50 border-red-200 text-red-800' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+          <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${s === 7 ? 'text-red-600' : 'text-blue-600'}`} />
+          <div>
+            <span className="font-semibold">{s === 7 ? 'Rejection Reason Entered:' : 'Review Notes Entered:'}</span>
+            <p className={`mt-1 text-xs leading-relaxed font-mono p-2 rounded ${s === 7 ? 'bg-white/40 border border-red-100 text-red-700' : 'bg-white/40 border border-blue-100 text-blue-700'}`}>{claim.reviewNotes}</p>
+          </div>
+        </div>
+      )}
+
       {/* Status hints for non-acting roles */}
       {s === 1 && !canTx4 && (
         <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg mb-5 text-sm">
@@ -258,7 +280,10 @@ export default function ClaimDetail() {
         </div>
       )}
 
-      {/* ── ML Fraud Assessment Panel ──────────────────────────────────────────── */}
+      {/* ── XAI Panel (live AI explanation from oracle) ──────────────────────── */}
+      <XaiPanel xaiCid={xaiCid} claimId={id} />
+
+      {/* ── ML Fraud Assessment Panel (score bar — always shown when score exists) */}
       {mlAssessment && (
         <div className="card p-5 mb-5">
           <div className="flex items-center justify-between mb-4">
@@ -267,7 +292,7 @@ export default function ClaimDetail() {
               <h2 className="font-semibold text-gray-900">ML Fraud Assessment</h2>
             </div>
             <span className="badge bg-purple-100 text-purple-600 text-xs">
-              Placeholder — ML model not yet integrated
+              {xaiCid ? 'Powered by EfficientNet-B3 + XGBoost' : 'Placeholder — oracle pending'}
             </span>
           </div>
 
@@ -405,8 +430,22 @@ export default function ClaimDetail() {
         <div className="card p-5">
           <h2 className="font-semibold text-gray-900 mb-4">Medical</h2>
           <dl className="space-y-3">
-            <Field label="Doctor"         value={meta?.medical?.doctorName} />
-            <Field label="Department"     value={meta?.medical?.department} />
+            <Field
+              label="Doctor"
+              value={
+                meta?.medical?.doctors && meta.medical.doctors.length > 0
+                  ? meta.medical.doctors.map(d => d.name + (d.registrationNumber ? ` (Reg: ${d.registrationNumber})` : '')).join(', ')
+                  : meta?.medical?.doctorName
+              }
+            />
+            <Field
+              label="Department"
+              value={
+                meta?.medical?.doctors && meta.medical.doctors.length > 0
+                  ? [...new Set(meta.medical.doctors.map(d => d.department))].join(', ')
+                  : meta?.medical?.department
+              }
+            />
             <Field label="Diagnosis"      value={meta?.medical?.diagnosis} />
             <Field label="ICD Code"       value={meta?.medical?.icdCode} />
             <Field label="Procedure Code" value={claim.procedureCode} />
