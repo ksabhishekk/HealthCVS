@@ -9,13 +9,33 @@ const {
 } = require('../services/blockchain')
 
 const router = express.Router()
+
+const requireHospitalApiKey = (req, res, next) => {
+  const key = req.headers['x-api-key']
+  if (!key || key !== process.env.HOSPITAL_API_KEY) {
+    return res.status(401).json({ error: 'Invalid or missing API key' })
+  }
+  next()
+}
+
+// Server-to-server inter-portal endpoint (no JWT required, authenticated via API key)
+router.get('/:id/review-notes', requireHospitalApiKey, async (req, res) => {
+  try {
+    const Claim = require('../models/Claim')
+    const claim = await Claim.findOne({ blockchainClaimId: Number(req.params.id) }).lean()
+    res.json({ reviewNotes: claim?.reviewNotes || null })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.use(authenticate)
 
 const fetchClaimMetadata = async (cid) => {
   if (!cid) return null
   try {
     const gateway = process.env.PINATA_GATEWAY || 'gateway.pinata.cloud'
-    const res = await require('node-fetch')(`https://${gateway}/ipfs/${cid}`, { timeout: 8000 })
+    const res = await fetch(`https://${gateway}/ipfs/${cid}`, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) return null
     return await res.json()
   } catch {
@@ -51,6 +71,16 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
     base.metadata = metadata
     base.patientName = metadata.patient?.name || null
     base.hospitalName = metadata.hospital?.name || null
+  }
+
+  try {
+    const Claim = require('../models/Claim')
+    const dbClaim = await Claim.findOne({ blockchainClaimId: id }).lean()
+    if (dbClaim) {
+      base.reviewNotes = dbClaim.reviewNotes || null
+    }
+  } catch (err) {
+    console.warn(`[Insurance] Could not attach reviewNotes: ${err.message}`)
   }
 
   return base
@@ -183,6 +213,15 @@ router.post('/:id/insurer-review',
         return res.status(400).json({ error: 'approve (true/false) is required' })
       }
       const { txHash, approved } = await insurerReviewOnBlockchain(Number(req.params.id), Boolean(approve))
+
+      // Save review notes to insurance DB Claim document
+      const Claim = require('../models/Claim')
+      await Claim.findOneAndUpdate(
+        { blockchainClaimId: Number(req.params.id) },
+        { reviewNotes: reviewNotes || '' },
+        { upsert: true }
+      )
+
       res.json({ success: true, txHash, approved, reviewNotes: reviewNotes || '' })
     } catch (err) {
       res.status(500).json({ error: err.message })
@@ -203,4 +242,45 @@ router.post('/:id/settle',
   }
 )
 
+// GET /api/claims/:id/xai — fetch oracle XAI data from MongoDB (for XaiPanel)
+router.get('/:id/xai', async (req, res) => {
+  try {
+    const Claim = require('../models/Claim')
+    const claim = await Claim.findOne({ blockchainClaimId: Number(req.params.id) })
+
+    if (!claim) return res.json({ xai: null, message: 'No oracle data found for this claim yet.' })
+
+    res.json({
+      xai: {
+        fraudScore:   claim.fraudScore,
+        xaiCid:       claim.xaiCid,
+        status:       claim.status,
+        oracleError:  claim.oracleError,
+      }
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/claims/:id/oracle-trigger — admin: manually run AI pipeline (testing)
+// In production the oracle fires automatically on DoctorAuthenticated event
+router.post('/:id/oracle-trigger',
+  requireRole('admin'),
+  async (req, res) => {
+    try {
+      const { processClaimAI } = require('../oracleWorker')
+      const claimId = Number(req.params.id)
+      res.json({ success: true, message: `Oracle pipeline started for Claim #${claimId}. Check server logs.` })
+      // Run async so the HTTP response returns immediately
+      processClaimAI(claimId).catch(err =>
+        console.error(`[Oracle Manual] Claim #${claimId} failed: ${err.message}`)
+      )
+    } catch (err) {
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
 module.exports = router
+
