@@ -31,7 +31,17 @@ export default function Step3Medical({ data, update, onNext, onBack }) {
   const updateDoctor = (i, doctorId) => {
     const found = doctors.find(d => d._id === doctorId)
     const updated = med.doctors.map((d, idx) =>
-      idx === i ? (found ? { id: found._id, name: found.name, department: found.department, specialization: found.specialization || '' } : { id: '', name: '', department: '', specialization: '' }) : d
+      idx === i
+        ? (found
+            ? {
+                id:                 found._id,
+                name:               found.name,
+                department:         found.department,
+                specialization:     found.specialization || '',
+                registrationNumber: found.registrationNumber || '',  // ← NMC reg no for oracle
+              }
+            : { id: '', name: '', department: '', specialization: '', registrationNumber: '' })
+        : d
     )
     setMed({ doctors: updated })
   }
@@ -120,12 +130,18 @@ export default function Step3Medical({ data, update, onNext, onBack }) {
                     <option value="">Select doctor…</option>
                     {availableForThis.map(doc => (
                       <option key={doc._id} value={doc._id}>
-                        {doc.name} — {doc.department}{doc.specialization ? ` (${doc.specialization})` : ''}
+                        {doc.name} — {doc.department}{doc.specialization ? ` (${doc.specialization})` : ''}{doc.registrationNumber ? ` · Reg: ${doc.registrationNumber}` : ' · ⚠ No reg no'}
                       </option>
                     ))}
                   </select>
                   {d.name && (
-                    <p className="text-xs text-gray-500 mt-1">{d.department}{d.specialization ? ` · ${d.specialization}` : ''}</p>
+                    <div className="text-xs text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+                      <span>{d.department}{d.specialization ? ` · ${d.specialization}` : ''}</span>
+                      {d.registrationNumber
+                        ? <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded text-xs font-mono">NMC: {d.registrationNumber}</span>
+                        : <span className="bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded text-xs">⚠ No NMC registration number — doctor verification will fail</span>
+                      }
+                    </div>
                   )}
                 </div>
                 <button type="button" onClick={() => removeDoctor(i)} className="text-gray-400 hover:text-red-500 mt-1.5">

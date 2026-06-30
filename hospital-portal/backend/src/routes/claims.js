@@ -20,7 +20,7 @@ const fetchClaimMetadata = async (cid) => {
   if (!cid) return null
   try {
     const gateway = process.env.PINATA_GATEWAY || 'gateway.pinata.cloud'
-    const res = await require('node-fetch')(`https://${gateway}/ipfs/${cid}`, { timeout: 8000 })
+    const res = await fetch(`https://${gateway}/ipfs/${cid}`, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) return null
     return await res.json()
   } catch {
@@ -55,8 +55,26 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
     updatedAt: Number(onChainClaim.updatedAt) * 1000,
   }
 
-  if (includeMetadata && onChainClaim.cidDischarge) {
-    base.metadata = await fetchClaimMetadata(onChainClaim.cidDischarge)
+  if (includeMetadata) {
+    if (onChainClaim.cidDischarge) {
+      base.metadata = await fetchClaimMetadata(onChainClaim.cidDischarge)
+    }
+
+    // Fetch review notes from insurance portal (server-to-server)
+    if (process.env.INSURANCE_PORTAL_URL) {
+      try {
+        const notesRes = await fetch(`${process.env.INSURANCE_PORTAL_URL}/api/claims/${id}/review-notes`, {
+          headers: { 'x-api-key': process.env.INSURANCE_API_KEY || '' },
+          signal: AbortSignal.timeout(4000)
+        })
+        if (notesRes.ok) {
+          const notesData = await notesRes.json()
+          base.reviewNotes = notesData.reviewNotes
+        }
+      } catch (err) {
+        console.warn(`[Hospital] Could not fetch review notes from insurance portal: ${err.message}`)
+      }
+    }
   }
 
   return base
@@ -176,12 +194,11 @@ router.post('/submit', async (req, res) => {
     const policyWarnings = []
     if (process.env.INSURANCE_PORTAL_URL && claimData.insurance?.policyNumber && claimData.insurance?.company) {
       try {
-        const fetch = require('node-fetch')
         const verifyRes = await fetch(`${process.env.INSURANCE_PORTAL_URL}/api/policy/verify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.INSURANCE_API_KEY || '' },
           body: JSON.stringify({ aadhaarHash, policyId: claimData.insurance.policyNumber, insuranceCompany: claimData.insurance.company }),
-          timeout: 6000,
+          signal: AbortSignal.timeout(6000),
         })
         const verifyData = await verifyRes.json()
         if (!verifyData.valid) {

@@ -125,27 +125,7 @@ export default function ClaimDetail() {
               runAction('Authenticated', () => authenticateClaim(id))
             )}
 
-            {/* TX4 — Fraud Score */}
-            {s === 1 && (
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min="0" max="100"
-                  placeholder="Fraud score 0–100"
-                  value={fraudInput}
-                  onChange={e => setFraudInput(e.target.value)}
-                  className="input w-40 py-1.5 text-sm"
-                />
-                {actionBtn(<Bot className="w-4 h-4" />, 'Write Score (TX4)', () => {
-                  const score = Number(fraudInput)
-                  if (isNaN(score) || score < 0 || score > 100) {
-                    setError('Enter a fraud score between 0 and 100')
-                    return Promise.reject()
-                  }
-                  return runAction('Fraud score written', () => setFraudScore(id, score))
-                })}
-              </div>
-            )}
+
 
             {/* TX5 — Adjudicate */}
             {s === 2 && actionBtn(<Gavel className="w-4 h-4" />, 'Run Adjudication (TX5)', () =>
@@ -180,6 +160,17 @@ export default function ClaimDetail() {
         </div>
       )}
       <TxBanner tx={lastTx} label={lastTxLabel} />
+
+      {/* Insurer Review Notes / Rejection Reason */}
+      {claim.reviewNotes && (
+        <div className={`border px-4 py-3.5 rounded-lg mb-5 text-sm flex items-start gap-2.5 ${s === 7 ? 'bg-red-50 border-red-200 text-red-800' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+          <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${s === 7 ? 'text-red-600' : 'text-blue-600'}`} />
+          <div>
+            <span className="font-semibold">{s === 7 ? 'Insurer Rejection Reason:' : 'Insurer Review Notes:'}</span>
+            <p className={`mt-1 text-xs leading-relaxed font-mono p-2 rounded ${s === 7 ? 'bg-white/40 border border-red-100 text-red-700' : 'bg-white/40 border border-blue-100 text-blue-700'}`}>{claim.reviewNotes}</p>
+          </div>
+        </div>
+      )}
 
       {/* Claim info grid */}
       <div className="grid grid-cols-3 gap-5">
@@ -218,8 +209,22 @@ export default function ClaimDetail() {
         <div className="card p-5">
           <h2 className="font-semibold text-gray-900 mb-4">Medical</h2>
           <dl className="space-y-3">
-            <Field label="Doctor" value={meta?.medical?.doctorName} />
-            <Field label="Department" value={meta?.medical?.department} />
+            <Field
+              label="Doctor"
+              value={
+                meta?.medical?.doctors && meta.medical.doctors.length > 0
+                  ? meta.medical.doctors.map(d => d.name + (d.registrationNumber ? ` (Reg: ${d.registrationNumber})` : '')).join(', ')
+                  : meta?.medical?.doctorName
+              }
+            />
+            <Field
+              label="Department"
+              value={
+                meta?.medical?.doctors && meta.medical.doctors.length > 0
+                  ? [...new Set(meta.medical.doctors.map(d => d.department))].join(', ')
+                  : meta?.medical?.department
+              }
+            />
             <Field label="Diagnosis" value={meta?.medical?.diagnosis} />
             <Field label="ICD Code" value={meta?.medical?.icdCode} />
             <Field label="Procedure Code" value={claim.procedureCode} />

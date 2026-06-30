@@ -28,7 +28,6 @@ router.post('/verify-policy', async (req, res) => {
       return res.status(503).json({ error: 'Insurance portal integration not configured (INSURANCE_PORTAL_URL missing)' })
     }
 
-    const fetch = require('node-fetch')
     const response = await fetch(`${insuranceUrl}/api/policy/verify`, {
       method: 'POST',
       headers: {
@@ -36,7 +35,7 @@ router.post('/verify-policy', async (req, res) => {
         'x-api-key': process.env.INSURANCE_API_KEY || '',
       },
       body: JSON.stringify({ aadhaarHash, policyId, insuranceCompany }),
-      timeout: 8000,
+      signal: AbortSignal.timeout(8000),
     })
 
     const data = await response.json()
