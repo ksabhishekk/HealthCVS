@@ -30,9 +30,16 @@ app.use((err, req, res, _next) => {
 
 const PORT = process.env.PORT || 5001
 
+const { startOracleListener } = require('./oracleWorker')
+
 connectDB().then(() => {
   app.listen(PORT, () => {
     console.log(`Insurer Portal API running on port ${PORT}`)
     console.log(`Insurer: ${process.env.INSURER_NAME} (${process.env.INSURER_CODE})`)
   })
+
+  // Start blockchain oracle — listens for DoctorAuthenticated events
+  // and triggers the AI fraud scoring pipeline (TX4)
+  startOracleListener()
 })
+
