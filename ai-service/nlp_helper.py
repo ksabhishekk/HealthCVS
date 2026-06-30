@@ -62,7 +62,7 @@ def verify_prescription_consistency(icd_code: str, ocr_text: str) -> tuple[bool,
             best_match_idx = cosine_sims.argmax()
             best_match_line = lines[best_match_idx]
 
-            if max_sim > 0.15:
+            if max_sim > 0.10:   # lowered from 0.15 — NIH descriptions are very short (3-5 words)
                 return True, f"Semantic match (similarity: {max_sim:.2f}). Diagnosis '{description}' matches: '{best_match_line}'."
             else:
                 return False, f"No semantic match for diagnosis: {description}. Best similarity: {max_sim:.2f}"
@@ -75,97 +75,139 @@ def verify_prescription_consistency(icd_code: str, ocr_text: str) -> tuple[bool,
 def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
     """
     Checks if the doctor's registration number is valid via Apify Actor.
-    Uses async run + polling because the scraper takes 1-5 minutes to complete.
+    Supports a single registration number or a comma-separated list of numbers.
+    Runs the verifications in parallel via ThreadPoolExecutor.
     Returns (is_verified, doctor_name).
     """
     if not reg_no:
         return False, "No registration number provided"
 
-    # Validate that the registration number contains only digits
-    if not reg_no.strip().isdigit():
-        return False, "Invalid registration number — must contain only digits."
+    # Split by comma to handle multiple registration numbers
+    regs = [r.strip() for r in reg_no.split(",") if r.strip()]
+    if not regs:
+        return False, "No registration number provided"
 
-    api_token = os.environ.get("APIFY_TOKEN")
+    # Check if mock mode is enabled for development/testing
+    if os.environ.get("MOCK_DOCTOR_VERIFY", "").lower() == "true":
+        mock_names = {
+            "5002": "Bhupendranath Gupta Bhaya",
+            "12345": "Dr. Deepak Joshi",
+            "15002": "Sibaprasad Sur",
+            "5001": "Pasupati Vaidhinathan Thampo"
+        }
+        verified_names = []
+        all_ok = True
+        for r in regs:
+            if r in mock_names:
+                verified_names.append(mock_names[r])
+            else:
+                if r.isdigit():
+                    verified_names.append(f"Mock Doctor (Reg: {r})")
+                else:
+                    all_ok = False
+                    verified_names.append(f"UNVERIFIED ({r})")
+        return all_ok, ", ".join(verified_names)
 
-    if not api_token:
-        return False, "APIFY_TOKEN environment variable is not set."
+    import concurrent.futures
 
-    try:
-        # Step 1: Start the actor run (don't wait for it synchronously)
-        start_url = f"https://api.apify.com/v2/acts/hQpzzhlkeQdWfOrby/runs?token={api_token}"
-        payload = {"registrationNumber": reg_no}
+    def verify_single(r: str) -> tuple[bool, str]:
+        # Validate that the registration number contains only digits (Apify actor constraint)
+        if not r.isdigit():
+            return False, f"Invalid format ({r})"
 
-        start_resp = requests.post(start_url, json=payload, timeout=30)
+        api_token = os.environ.get("APIFY_TOKEN")
+        if not api_token:
+            return False, "APIFY_TOKEN not set"
 
-        if start_resp.status_code == 401:
-            return False, "Unauthorized: Invalid Apify API Token."
-        if start_resp.status_code not in (200, 201):
-            return False, f"Failed to start Apify actor: {start_resp.status_code} - {start_resp.text[:200]}"
+        try:
+            # Step 1: Start the actor run
+            start_url = f"https://api.apify.com/v2/acts/hQpzzhlkeQdWfOrby/runs?token={api_token}"
+            payload = {"registrationId": r, "maxResults": 1}
+            start_resp = requests.post(start_url, json=payload, timeout=30)
 
-        run_data = start_resp.json().get("data", {})
-        run_id = run_data.get("id")
+            if start_resp.status_code == 401:
+                return False, "Unauthorized: Invalid Apify token."
+            if start_resp.status_code not in (200, 201):
+                return False, f"Failed to start run (status {start_resp.status_code})"
 
-        if not run_id:
-            return False, "Failed to get run ID from Apify."
+            run_data = start_resp.json().get("data", {})
+            run_id = run_data.get("id")
+            if not run_id:
+                return False, "Failed to get run ID"
 
-        # Step 2: Poll for completion (actor takes 50s-5min typically)
-        status_url = f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
-        max_wait = 300  # 5 minutes max
-        poll_interval = 10  # check every 10 seconds
-        elapsed = 0
+            # Step 2: Poll for completion
+            status_url = f"https://api.apify.com/v2/actor-runs/{run_id}?token={api_token}"
+            max_wait = 300
+            poll_interval = 10
+            elapsed = 0
 
-        while elapsed < max_wait:
-            time.sleep(poll_interval)
-            elapsed += poll_interval
+            while elapsed < max_wait:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+                status_resp = requests.get(status_url, timeout=15)
+                if status_resp.status_code != 200:
+                    continue
+                run_status = status_resp.json().get("data", {}).get("status")
+                if run_status == "SUCCEEDED":
+                    break
+                elif run_status in ("FAILED", "ABORTED", "TIMED-OUT"):
+                    return False, f"Apify run {run_status.lower()}"
+            else:
+                return False, "Timeout"
 
-            status_resp = requests.get(status_url, timeout=15)
-            if status_resp.status_code != 200:
-                continue
+            # Step 3: Fetch the dataset items
+            dataset_id = status_resp.json().get("data", {}).get("defaultDatasetId")
+            if not dataset_id:
+                return False, "No dataset ID"
 
-            run_status = status_resp.json().get("data", {}).get("status")
+            items_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
+            items_resp = requests.get(items_url, timeout=15)
+            if items_resp.status_code != 200:
+                return False, "Failed to fetch dataset"
 
-            if run_status == "SUCCEEDED":
-                break
-            elif run_status in ("FAILED", "ABORTED", "TIMED-OUT"):
-                return False, f"Apify actor run {run_status.lower()}."
+            data = items_resp.json()
+            if data and isinstance(data, list) and len(data) > 0:
+                result = data[0]
+                doctor_name = (
+                    result.get("name") or
+                    result.get("fullName") or
+                    result.get("doctorName") or
+                    result.get("registeredName") or
+                    result.get("physicianName") or
+                    result.get("doctor_name") or
+                    None
+                )
+                if not doctor_name:
+                    return False, "Name empty in registry payload"
+                return True, doctor_name
+            else:
+                return False, "Not found"
+        except Exception as e:
+            return False, str(e)
 
+    # Verify all registration numbers in parallel using threads
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(regs)) as executor:
+        futures = {executor.submit(verify_single, r): r for r in regs}
+        for future in concurrent.futures.as_completed(futures):
+            reg = futures[future]
+            try:
+                ok, name = future.result()
+                results.append((reg, ok, name))
+            except Exception as e:
+                results.append((reg, False, str(e)))
+
+    # Map back by original order
+    results_map = {res[0]: (res[1], res[2]) for res in results}
+    
+    verified_names = []
+    all_ok = True
+    for r in regs:
+        ok, name = results_map.get(r, (False, "Unknown error"))
+        if ok:
+            verified_names.append(name)
         else:
-            return False, "Doctor verification timed out after 5 minutes."
+            all_ok = False
+            verified_names.append(f"UNVERIFIED ({name})")
 
-        # Step 3: Fetch the dataset items
-        dataset_id = status_resp.json().get("data", {}).get("defaultDatasetId")
-        if not dataset_id:
-            return False, "No dataset returned from Apify run."
-
-        items_url = f"https://api.apify.com/v2/datasets/{dataset_id}/items?token={api_token}"
-        items_resp = requests.get(items_url, timeout=15)
-
-        if items_resp.status_code != 200:
-            return False, f"Failed to fetch results: {items_resp.status_code}"
-
-        data = items_resp.json()
-        if data and isinstance(data, list) and len(data) > 0:
-            result = data[0]
-            # Try multiple common field names for doctor name
-            doctor_name = (
-                result.get("name") or
-                result.get("fullName") or
-                result.get("doctorName") or
-                result.get("registeredName") or
-                result.get("physicianName") or
-                result.get("doctor_name") or
-                None
-            )
-
-            if not doctor_name:
-                # Return sample data so we can see the actual field names
-                sample_keys = list(result.keys())[:8] if isinstance(result, dict) else []
-                sample_data = {k: str(result[k])[:50] for k in sample_keys}
-                return False, f"Doctor found but could not extract name. Fields: {sample_data}"
-
-            return True, doctor_name
-        else:
-            return False, "Doctor registration number not found in registry."
-
-    except requests.RequestException as e:
-        return False, f"Error reaching Apify API: {str(e)}"
+    return all_ok, ", ".join(verified_names)

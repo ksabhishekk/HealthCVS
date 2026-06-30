@@ -24,6 +24,6 @@ insurance-portal/frontend/.env
 ai-service/.env
 ai-service/dataset/
 ai-service/*.h5
-ai-service/*_phase1.keras
-ai-service/forgery_detector.keras
-__pycache__/
+ai-service/*.keras
+ai-service/__pycache__/
+ai-service/venv/
