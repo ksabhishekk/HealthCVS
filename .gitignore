@@ -6,6 +6,9 @@ coverage/
 coverage.json
 typechain-types/
 
+# Hardhat local blockchain state (machine-specific, do not commit)
+hardhat-state.json
+
 # Hospital portal
 hospital-portal/backend/node_modules/
 hospital-portal/frontend/node_modules/

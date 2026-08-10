@@ -1,9 +1,11 @@
 const hre = require('hardhat')
 
+require('dotenv').config()
+
 // ── Fill these in ────────────────────────────────────────────────────────────
-const ROLE_MANAGER_ADDRESS = '0x3523B81c2FCD522f37865728aEa869Eeca164AA4'
-const HOSPITAL_WALLET = '0xF33bA5600D0ec852599741Bd5594Aa12b45aCA2F'
-const INSURER_WALLET = '0xEa18D341224d9100B694921Eca5e1689dc8C1504'
+const ROLE_MANAGER_ADDRESS = process.env.ROLE_MANAGER_ADDRESS
+const HOSPITAL_WALLET = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'  // Account #1
+const INSURER_WALLET  = '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'  // Account #2
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function main() {
