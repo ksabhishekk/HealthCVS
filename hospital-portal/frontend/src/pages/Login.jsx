@@ -4,7 +4,7 @@ import { Hospital, Eye, EyeOff, AlertCircle, ShieldCheck, Database, FileSearch }
 import { useAuth } from '../context/AuthContext'
 
 const FEATURES = [
-  { icon: ShieldCheck, text: 'Immutable audit trail on Polygon blockchain' },
+  { icon: ShieldCheck, text: 'Immutable audit trail on blockchain' },
   { icon: Database,    text: 'Document CIDs stored via IPFS (Pinata)' },
   { icon: FileSearch,  text: 'Automated fraud scoring and adjudication' },
 ]
@@ -34,31 +34,27 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex">
-      {/* Left panel */}
+      {/* Left panel (now subtle light theme instead of dark slate) */}
       <div
-        className="hidden lg:flex w-5/12 bg-slate-900 flex-col justify-between p-12 relative overflow-hidden"
-        style={{
-          backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px)',
-          backgroundSize: '28px 28px',
-        }}
+        className="hidden lg:flex w-5/12 bg-blue-50 flex-col justify-between p-12 relative overflow-hidden border-r border-blue-100"
       >
         {/* Top: brand */}
         <div className="relative z-10 flex items-center gap-3">
-          <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center">
+          <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center shadow-sm">
             <Hospital className="w-5 h-5 text-white" />
           </div>
           <div>
-            <div className="text-white font-bold text-base leading-tight">HealthCVS</div>
-            <div className="text-slate-400 text-xs">Hospital Portal</div>
+            <div className="text-blue-900 font-bold text-base leading-tight">HealthCVS</div>
+            <div className="text-blue-600/80 text-xs font-medium">Hospital Portal</div>
           </div>
         </div>
 
         {/* Middle: headline + features */}
         <div className="relative z-10">
-          <h1 className="text-3xl font-bold text-white leading-snug mb-3">
+          <h1 className="text-3xl font-bold text-blue-950 leading-tight mb-4 tracking-tight">
             Blockchain-verified<br />insurance claims
           </h1>
-          <p className="text-slate-400 text-sm leading-relaxed mb-8">
+          <p className="text-blue-800/70 text-[15px] leading-relaxed mb-8 max-w-sm">
             City General Hospital's secure claim management platform. Every transaction is signed,
             timestamped, and recorded on-chain — tamper-proof by design.
           </p>
@@ -66,10 +62,10 @@ export default function Login() {
           <div className="space-y-4">
             {FEATURES.map(({ icon: Icon, text }) => (
               <div key={text} className="flex items-center gap-3">
-                <div className="w-7 h-7 bg-slate-800 border border-slate-700 rounded-lg flex items-center justify-center shrink-0">
-                  <Icon className="w-3.5 h-3.5 text-blue-400" />
+                <div className="w-8 h-8 bg-white border border-blue-100 rounded-xl flex items-center justify-center shrink-0 shadow-sm">
+                  <Icon className="w-4 h-4 text-blue-500" />
                 </div>
-                <span className="text-slate-300 text-sm">{text}</span>
+                <span className="text-blue-900 text-[13px] font-medium">{text}</span>
               </div>
             ))}
           </div>
@@ -77,8 +73,8 @@ export default function Login() {
 
         {/* Bottom: tech stack tags */}
         <div className="relative z-10 flex flex-wrap gap-2">
-          {['Polygon Amoy', 'Pinata IPFS', 'PM-JAY Compliant', 'Solidity'].map(tag => (
-            <span key={tag} className="px-2.5 py-1 bg-slate-800 border border-slate-700 rounded-md text-xs text-slate-400">
+          {['Local Blockchain', 'Pinata IPFS', 'PM-JAY Compliant', 'Solidity'].map(tag => (
+            <span key={tag} className="px-2.5 py-1 bg-white border border-blue-100 rounded-lg text-xs font-semibold text-blue-600 shadow-sm">
               {tag}
             </span>
           ))}
@@ -86,7 +82,7 @@ export default function Login() {
       </div>
 
       {/* Right panel */}
-      <div className="flex-1 flex items-center justify-center p-8 bg-gray-50">
+      <div className="flex-1 flex items-center justify-center p-8 bg-white">
         <div className="w-full max-w-sm">
           {/* Mobile-only logo */}
           <div className="lg:hidden flex items-center gap-2 mb-8">

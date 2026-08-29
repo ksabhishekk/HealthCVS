@@ -16,6 +16,10 @@ export default {
           900: '#1e3a8a',
         },
       },
+      boxShadow: {
+        'apple': '0 4px 24px -6px rgba(0, 0, 0, 0.05), 0 0 1px rgba(0,0,0,0.1)',
+        'apple-btn': '0 1px 2px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0,0,0,0.05)',
+      }
     },
   },
   plugins: [],

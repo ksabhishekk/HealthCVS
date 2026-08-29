@@ -109,9 +109,7 @@ function TxBanner({ tx, label, notes }) {
       <div className="flex items-center gap-2">
         <CheckCircle className="w-4 h-4 shrink-0" />
         <span>{label} — TX:{' '}
-          <a href={`https://amoy.polygonscan.com/tx/${tx}`} target="_blank" rel="noreferrer" className="underline font-mono">
-            {shortenHash(tx)}
-          </a>
+          <span className="font-mono">{shortenHash(tx)}</span>
         </span>
       </div>
       {notes && (

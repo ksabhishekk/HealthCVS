@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { PlusCircle, ArrowRight, TrendingUp } from 'lucide-react'
+import { PlusCircle, ArrowRight, TrendingUp, FileText } from 'lucide-react'
 import { getClaimStats, getClaims } from '../api/claims'
 import StatsCard from '../components/StatsCard'
 import ClaimStatusBadge from '../components/ClaimStatusBadge'
@@ -76,7 +76,7 @@ export default function Dashboard() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-400 border-b border-gray-100 bg-gray-50/60">
+                <tr className="text-left text-[13px] text-gray-500 border-b border-gray-100 bg-gray-50/50">
                   <th className="px-5 py-3 font-semibold tracking-wide">Claim ID</th>
                   <th className="px-5 py-3 font-semibold tracking-wide">Patient</th>
                   <th className="px-5 py-3 font-semibold tracking-wide">Procedure</th>

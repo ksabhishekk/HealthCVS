@@ -100,7 +100,7 @@ export default function ClaimList() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-gray-500 border-b bg-gray-50">
+                <tr className="text-left text-[13px] text-gray-500 border-b border-gray-100 bg-gray-50/50">
                   <th className="px-5 py-3 font-medium">Claim ID</th>
                   <th className="px-5 py-3 font-medium">Patient</th>
                   <th className="px-5 py-3 font-medium">Procedure</th>

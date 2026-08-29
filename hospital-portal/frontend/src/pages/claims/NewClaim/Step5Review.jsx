@@ -48,7 +48,7 @@ export default function Step5Review({ data, onBack, onSubmit, submitting, error 
   return (
     <div className="max-w-2xl space-y-4">
       <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
-        Review all details carefully. Once submitted, this claim is recorded immutably on the Polygon blockchain and cannot be modified.
+        Review all details carefully. Once submitted, this claim is recorded immutably on the blockchain and cannot be modified.
       </div>
 
       <Section title="Patient & Admission">
@@ -189,7 +189,7 @@ export default function Step5Review({ data, onBack, onSubmit, submitting, error 
       {submitting && (
         <div className="text-xs text-gray-500 text-center space-y-1">
           <p>1. Uploading claim metadata to IPFS…</p>
-          <p>2. Signing & broadcasting transaction to Polygon Amoy…</p>
+          <p>2. Signing & broadcasting transaction to blockchain…</p>
           <p>3. Waiting for block confirmation…</p>
         </div>
       )}
