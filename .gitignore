@@ -30,3 +30,6 @@ ai-service/*.h5
 ai-service/*.keras
 ai-service/__pycache__/
 ai-service/venv/
+
+# Local working notes
+notes/
