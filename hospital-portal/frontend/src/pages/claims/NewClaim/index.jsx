@@ -44,6 +44,9 @@ const INITIAL = {
 
   // Step 4
   documents: [],
+
+  // Step 5 — patient consent (OTP), verified in-place before submit is allowed
+  consent: { verified: false, token: null },
 }
 
 export default function NewClaim() {
@@ -68,6 +71,7 @@ export default function NewClaim() {
       const payload = {
         aadhaarHash: data.aadhaarHash || undefined,
         aadhaarNumber: data.aadhaarNumber || undefined,
+        consentToken: data.consent?.token || undefined,
         patient: {
           name: data.patient?.name,
           aadhaarLast4: data.patient?.aadhaarLast4,

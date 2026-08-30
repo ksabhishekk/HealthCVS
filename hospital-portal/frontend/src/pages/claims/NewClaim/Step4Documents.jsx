@@ -6,6 +6,7 @@ const GATEWAY = import.meta.env.VITE_PINATA_GATEWAY || 'gateway.pinata.cloud'
 
 // All 9 Indian health insurance document requirements
 const REQUIRED_DOCS = [
+  { type: 'hospital_bill',         label: 'Hospital Bill / Invoice (itemized)', required: true, always: true },
   { type: 'insurance_card',        label: 'Insurance Card / Policy Copy (current year)', required: true, always: true },
   { type: 'patient_kyc',           label: 'Patient Aadhaar Card & PAN Card', required: true, always: true },
   { type: 'consultation_papers',   label: 'Doctor\'s Consultation Papers (all OPD prescriptions)', required: true, always: true },

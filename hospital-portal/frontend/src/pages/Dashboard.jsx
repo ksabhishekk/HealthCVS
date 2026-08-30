@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { PlusCircle, ArrowRight, TrendingUp } from 'lucide-react'
+import { PlusCircle, ArrowRight, TrendingUp, FileText } from 'lucide-react'
 import { getClaimStats, getClaims } from '../api/claims'
 import StatsCard from '../components/StatsCard'
 import ClaimStatusBadge from '../components/ClaimStatusBadge'

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle, Loader2, Bot, Gavel, BadgeCheck, Banknote, XCircle } from 'lucide-react'
-import { getClaim, authenticateClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim } from '../../api/claims'
+import { ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
+import { getClaim, authenticateClaim } from '../../api/claims'
 import ClaimStatusBadge from '../../components/ClaimStatusBadge'
 import { useAuth } from '../../context/AuthContext'
 
@@ -14,6 +14,7 @@ const GATEWAY = import.meta.env.VITE_PINATA_GATEWAY || 'gateway.pinata.cloud'
 const ipfsUrl = (cid) => cid ? `https://${GATEWAY}/ipfs/${cid}` : null
 
 const DOC_LABELS = {
+  hospital_bill: 'Hospital Bill / Invoice',
   insurance_card: 'Insurance Card / Policy Copy',
   employee_id: 'Employee PAN & Aadhaar',
   proposer_id: 'Proposer PAN & Aadhaar',
@@ -117,40 +118,30 @@ export default function ClaimDetail() {
           </div>
         </div>
 
-        {/* Action buttons — only visible to admin, shown based on current status */}
-        {isAdmin && (
+        {/* Action buttons — only visible to admin, shown based on current status.
+            Only TX3 (doctor authentication) belongs to the hospital: the hospital
+            wallet holds HOSPITAL_CLERK_ROLE + DOCTOR_ROLE only (see scripts/grantRoles.js).
+            TX4-TX7 require INSURER_ROLE or DEFAULT_ADMIN_ROLE, which this wallet does not
+            have — those actions live in the insurance portal instead. */}
+        {isAdmin && s === 0 && (
           <div className="flex items-center gap-2">
-            {/* TX3 — Authenticate */}
-            {s === 0 && actionBtn(<CheckCircle className="w-4 h-4" />, 'Authenticate (TX3)', () =>
+            {actionBtn(<CheckCircle className="w-4 h-4" />, 'Authenticate (TX3)', () =>
               runAction('Authenticated', () => authenticateClaim(id))
-            )}
-
-
-
-            {/* TX5 — Adjudicate */}
-            {s === 2 && actionBtn(<Gavel className="w-4 h-4" />, 'Run Adjudication (TX5)', () =>
-              runAction('Adjudicated', () => adjudicateClaim(id))
-            )}
-
-            {/* TX6 — Insurer review: approve or reject */}
-            {(s === 3 || s === 6) && (
-              <div className="flex items-center gap-2">
-                {actionBtn(<BadgeCheck className="w-4 h-4" />, 'Approve (TX6)', () =>
-                  runAction('Approved by insurer', () => insurerReview(id, true))
-                )}
-                {actionBtn(<XCircle className="w-4 h-4" />, 'Reject (TX6)', () =>
-                  runAction('Rejected by insurer', () => insurerReview(id, false)), 'danger'
-                )}
-              </div>
-            )}
-
-            {/* TX7 — Settle */}
-            {s === 4 && actionBtn(<Banknote className="w-4 h-4" />, 'Settle Claim (TX7)', () =>
-              runAction('Claim settled', () => settleClaim(id))
             )}
           </div>
         )}
       </div>
+
+      {/* Status hints for stages that happen outside the hospital portal */}
+      {s >= 1 && s <= 4 && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg mb-5 text-sm">
+          {s === 1 && 'Awaiting AI fraud scoring (TX4) — runs automatically once the AI oracle processes this claim.'}
+          {s === 2 && 'Awaiting automated adjudication (TX5) — runs against PM-JAY rate ceilings and the fraud score.'}
+          {s === 3 && 'Awaiting insurer review (TX6) — a senior reviewer at the insurer must approve or reject this claim.'}
+          {s === 4 && 'Approved — awaiting settlement (TX7) from the insurer\'s finance team.'}
+          {' '}These stages are handled in the insurance portal, not here.
+        </div>
+      )}
 
       {/* Feedback banners */}
       {error && (

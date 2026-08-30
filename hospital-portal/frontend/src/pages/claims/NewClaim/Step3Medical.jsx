@@ -58,7 +58,11 @@ export default function Step3Medical({ data, update, onNext, onBack }) {
   const selectProcedure = (i, code) => {
     const found = procedures.find(p => p.code === code)
     const updated = med.procedures.map((p, idx) =>
-      idx === i ? (found ? { code: found.code, name: found.name, claimedAmount: String(found.ceilingAmount || '') } : { code: '', name: '', claimedAmount: '' }) : p
+      idx === i
+        ? (found
+            ? { code: found.code, name: found.name, claimedAmount: String(found.ceilingAmount || ''), ceilingAmount: found.ceilingAmount || null }
+            : { code: '', name: '', claimedAmount: '', ceilingAmount: null })
+        : p
     )
     setMed({ procedures: updated })
   }

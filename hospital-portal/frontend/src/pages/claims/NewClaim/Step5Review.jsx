@@ -1,9 +1,12 @@
-import { Loader2, AlertCircle, FileText, CheckCircle2 } from 'lucide-react'
+import { useState } from 'react'
+import { Loader2, AlertCircle, FileText, CheckCircle2, ShieldCheck, PhoneCall, Send } from 'lucide-react'
+import { sendConsentOtp, verifyConsentOtp } from '../../../api/consent'
 
 const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
 
 const DOC_LABELS = {
+  hospital_bill: 'Hospital Bill / Invoice',
   insurance_card: 'Insurance Card / Policy Copy',
   employee_id: 'Employee PAN & Aadhaar',
   proposer_id: 'Proposer PAN & Aadhaar',
@@ -36,7 +39,112 @@ function Row({ label, value }) {
   )
 }
 
-export default function Step5Review({ data, onBack, onSubmit, submitting, error }) {
+// ── Patient consent (OTP) ──────────────────────────────────────────────────
+// Closes the hospital-patient collusion gap: nothing in the system previously
+// asked the patient anything before a claim was filed on their behalf. An OTP
+// to their own on-file contact number, verified before submission is allowed,
+// adds the patient as a fourth attesting party alongside clerk/doctor/insurer —
+// enforced off-chain (in the /claims/submit route) to avoid a contract redeploy.
+function PatientConsent({ contactNumber, patientName, procedureSummary, consent, update }) {
+  const [sending, setSending] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [sent, setSent] = useState(false)
+  const [otpValue, setOtpValue] = useState('')
+  const [devOtp, setDevOtp] = useState(null)
+  const [sendMessage, setSendMessage] = useState('')
+  const [consentError, setConsentError] = useState('')
+
+  const handleSend = async () => {
+    setSending(true)
+    setConsentError('')
+    setDevOtp(null)
+    try {
+      const { data: res } = await sendConsentOtp({ contactNumber, patientName, procedureSummary })
+      setSent(true)
+      setSendMessage(res.message || '')
+      if (res.devOtp) setDevOtp(res.devOtp)  // present whenever a real SMS wasn't actually delivered
+    } catch (err) {
+      setConsentError(err.response?.data?.error || 'Failed to send OTP')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleVerify = async () => {
+    if (otpValue.length !== 6) return
+    setVerifying(true)
+    setConsentError('')
+    try {
+      const { data: res } = await verifyConsentOtp({ contactNumber, otp: otpValue })
+      update({ consent: { verified: true, token: res.consentToken, contactNumber } })
+    } catch (err) {
+      setConsentError(err.response?.data?.error || 'Verification failed')
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  if (consent?.verified) {
+    return (
+      <div className="card p-5 border-green-200 bg-green-50">
+        <div className="flex items-center gap-2 text-green-700 font-medium text-sm">
+          <ShieldCheck className="w-4 h-4" /> Patient consent verified — xxxxxx{contactNumber.slice(-4)}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card p-5">
+      <h3 className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
+        <PhoneCall className="w-4 h-4 text-gray-500" /> Patient Consent Required
+      </h3>
+      <p className="text-xs text-gray-500 mb-4">
+        Confirm with the patient that they authorize this claim before it's submitted. An OTP will be sent to their contact number (xxxxxx{contactNumber?.slice(-4) || '----'}).
+      </p>
+
+      {!sent ? (
+        <button type="button" className="btn-primary" onClick={handleSend} disabled={sending || !contactNumber}>
+          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          {sending ? 'Sending…' : 'Send OTP to Patient'}
+        </button>
+      ) : (
+        <div className="space-y-3">
+          {sendMessage && !devOtp && (
+            <div className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              {sendMessage}
+            </div>
+          )}
+          {devOtp && (
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              {sendMessage} — OTP: <span className="font-mono font-bold">{devOtp}</span>
+            </div>
+          )}
+          <div className="flex gap-3">
+            <input
+              type="text"
+              className="input font-mono flex-1"
+              placeholder="6-digit OTP"
+              maxLength={6}
+              value={otpValue}
+              onChange={e => setOtpValue(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            />
+            <button type="button" className="btn-primary shrink-0" onClick={handleVerify} disabled={verifying || otpValue.length !== 6}>
+              {verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Verify'}
+            </button>
+          </div>
+          <button type="button" onClick={handleSend} disabled={sending} className="text-xs text-blue-600 hover:underline">
+            Resend OTP
+          </button>
+        </div>
+      )}
+
+      {consentError && <p className="text-sm text-red-600 mt-2">{consentError}</p>}
+    </div>
+  )
+}
+
+export default function Step5Review({ data, update, onBack, onSubmit, submitting, error }) {
   const { patient, admission, insurance, medical, documents } = data
 
   const totalAmount = (medical?.procedures || []).reduce((s, p) => s + (Number(p.claimedAmount) || 0), 0)
@@ -150,6 +258,14 @@ export default function Step5Review({ data, onBack, onSubmit, submitting, error 
         )}
       </Section>
 
+      <PatientConsent
+        contactNumber={admission?.contactNumber}
+        patientName={patient?.name}
+        procedureSummary={primaryProcedure?.name}
+        consent={data.consent}
+        update={update}
+      />
+
       {/* Documents */}
       <div className="card p-5">
         <h3 className="font-semibold text-gray-900 mb-3 pb-2 border-b">Documents ({documents.length})</h3>
@@ -177,7 +293,8 @@ export default function Step5Review({ data, onBack, onSubmit, submitting, error 
 
       <div className="flex justify-between">
         <button className="btn-secondary" onClick={onBack} disabled={submitting}>Back</button>
-        <button className="btn-primary" onClick={onSubmit} disabled={submitting}>
+        <button className="btn-primary" onClick={onSubmit} disabled={submitting || !data.consent?.verified}
+          title={!data.consent?.verified ? 'Verify patient consent (OTP) above before submitting' : undefined}>
           {submitting ? (
             <><Loader2 className="w-4 h-4 animate-spin" /> Submitting to Blockchain…</>
           ) : (
@@ -185,6 +302,10 @@ export default function Step5Review({ data, onBack, onSubmit, submitting, error 
           )}
         </button>
       </div>
+
+      {!data.consent?.verified && (
+        <p className="text-xs text-amber-600 text-right -mt-2">Patient consent must be verified before you can submit.</p>
+      )}
 
       {submitting && (
         <div className="text-xs text-gray-500 text-center space-y-1">
