@@ -6,6 +6,9 @@ coverage/
 coverage.json
 typechain-types/
 
+# Local blockchain persistent state (do not commit)
+ganache-db/
+
 # Hospital portal
 hospital-portal/backend/node_modules/
 hospital-portal/frontend/node_modules/

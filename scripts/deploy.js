@@ -116,8 +116,27 @@ async function main() {
   console.log(`PATIENT_REGISTRY_ADDRESS=${patientRegistryAddress}`);
   console.log(`CLAIM_SUBMISSION_ADDRESS=${claimSubmissionAddress}`);
   console.log(`AUTO_ADJUDICATION_ADDRESS=${autoAdjudicationAddress}`);
-  console.log("\nCopy the above lines into your .env file.");
-  console.log(`View on explorer: https://amoy.polygonscan.com/address/${roleManagerAddress}\n`);
+  // ── Auto-Update .env files (for local dev) ───────────────────────────────────
+  if (isLocal) {
+    const fs = require('fs');
+    const path = require('path');
+    
+    function updateEnvFile(envPath) {
+      if (!fs.existsSync(envPath)) return;
+      let content = fs.readFileSync(envPath, 'utf8');
+      content = content.replace(/ROLE_MANAGER_ADDRESS=.*/g, `ROLE_MANAGER_ADDRESS=${roleManagerAddress}`);
+      content = content.replace(/PATIENT_REGISTRY_ADDRESS=.*/g, `PATIENT_REGISTRY_ADDRESS=${patientRegistryAddress}`);
+      content = content.replace(/CLAIM_SUBMISSION_ADDRESS=.*/g, `CLAIM_SUBMISSION_ADDRESS=${claimSubmissionAddress}`);
+      content = content.replace(/AUTO_ADJUDICATION_ADDRESS=.*/g, `AUTO_ADJUDICATION_ADDRESS=${autoAdjudicationAddress}`);
+      fs.writeFileSync(envPath, content);
+      console.log(`✓ Updated ${envPath}`);
+    }
+
+    console.log("\nUpdating .env files with new local addresses...");
+    updateEnvFile(path.join(__dirname, '../.env'));
+    updateEnvFile(path.join(__dirname, '../hospital-portal/backend/.env'));
+    updateEnvFile(path.join(__dirname, '../insurance-portal/backend/.env'));
+  }
 }
 
 main().catch((error) => {
