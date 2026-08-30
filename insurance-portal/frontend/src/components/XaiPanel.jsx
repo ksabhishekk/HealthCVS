@@ -103,13 +103,16 @@ export default function XaiPanel({ xaiCid, claimId }) {
 
   if (!data) return null
 
-  const { finalFraudScore, weights, components, shapExplanations, nlpReason, doctorName, gradcamImagePath, isSuspicious, timestamp } = data
-  const { tabularScore, cvScore, nlpScore, nlpConsistent, doctorVerified } = components || {}
+  const { finalFraudScore, weights, components, shapExplanations, nlpReason, doctorName, gradcamImagePath, isSuspicious, timestamp, duplicateClaimId, duplicateReason, behavioralSignals } = data
+  const { tabularScore, xgboostScore, anomalyScore, cvScore, nlpScore, nlpConsistent, doctorVerified, domainMatch, expectedDepartments, domainReason } = components || {}
 
-  const scoreColor = finalFraudScore >= 80 ? 'red' : finalFraudScore >= 60 ? 'amber' : 'green'
+  // Thresholds mirror AutoAdjudication.sol's FRAUD_THRESHOLD (75) so this panel
+  // never disagrees with the on-chain adjudication outcome or the ML Fraud
+  // Assessment card elsewhere on this page.
+  const scoreColor = finalFraudScore >= 75 ? 'red' : finalFraudScore >= 50 ? 'amber' : 'green'
   const scoreBgMap = { red: 'bg-red-50 border-red-200', amber: 'bg-amber-50 border-amber-200', green: 'bg-emerald-50 border-emerald-200' }
   const scoreTextMap = { red: 'text-red-700', amber: 'text-amber-700', green: 'text-emerald-700' }
-  const scoreLabelMap = { red: 'Auto-Reject', amber: 'Manual Review', green: 'Approve' }
+  const scoreLabelMap = { red: 'Auto-Flagged', amber: 'Manual Review', green: 'Approve' }
 
   return (
     <div className="card p-5 mb-5 space-y-5">
@@ -121,7 +124,7 @@ export default function XaiPanel({ xaiCid, claimId }) {
         </div>
         <div className="flex items-center gap-2">
           <span className="badge bg-purple-50 text-purple-600 text-xs border border-purple-100">
-            EfficientNet-B3 + XGBoost + NLP
+            EfficientNet-B3 + XGBoost/IsolationForest + NLP
           </span>
           {xaiCid && (
             <a href={ipfsUrl(xaiCid)} target="_blank" rel="noreferrer"
@@ -131,6 +134,20 @@ export default function XaiPanel({ xaiCid, claimId }) {
           )}
         </div>
       </div>
+
+      {/* Duplicate-episode signal — informational, does not affect the score.
+          Same patient + same procedure code submitted within 3 days of each
+          other; could be genuine recurring care (dialysis, chemo) or the same
+          episode billed twice — needs a human to tell the difference. */}
+      {duplicateClaimId && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 flex items-start gap-3">
+          <ShieldAlert className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-800">Possible duplicate claim</p>
+            <p className="text-xs text-red-700 mt-0.5">{duplicateReason} Verify this isn't the same treatment episode billed twice before approving.</p>
+          </div>
+        </div>
+      )}
 
       {/* Final score big card */}
       <div className={`rounded-xl border p-4 ${scoreBgMap[scoreColor]}`}>
@@ -156,6 +173,7 @@ export default function XaiPanel({ xaiCid, claimId }) {
         <p className="text-xs text-gray-500 mt-2">
           Formula: (Tabular × {weights?.tabular}) + (CV × {weights?.cv}) + (NLP × {weights?.nlp})
           {!doctorVerified && ' · Doctor unverified → floor applied at 75'}
+          {doctorVerified && domainMatch === false && ' · Doctor domain mismatch → floor applied at 60'}
         </p>
       </div>
 
@@ -166,9 +184,23 @@ export default function XaiPanel({ xaiCid, claimId }) {
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <BarChart2 className="w-3.5 h-3.5 text-blue-500" />
-              <span className="text-xs font-medium text-gray-600">Tabular Fraud Model (XGBoost) — 50% weight</span>
+              <span className="text-xs font-medium text-gray-600">Tabular Fraud Model (hybrid) — 50% weight</span>
             </div>
             <ScoreBar label="" value={tabularScore ?? 0} color="blue" />
+            {(xgboostScore != null || anomalyScore != null) && (
+              <p className="text-xs text-gray-400 mt-1">
+                Hybrid of a supervised model (XGBoost: {xgboostScore != null ? Math.round(xgboostScore) : '—'}/100) and an
+                {' '}unsupervised anomaly check (IsolationForest: {anomalyScore != null ? Math.round(anomalyScore) : '—'}/100) —
+                {' '}70/30 blend, so unusual claims get flagged even if they don't match a known fraud pattern.
+              </p>
+            )}
+            {behavioralSignals && (
+              <p className="text-xs text-gray-400 mt-1">
+                Computed from on-chain history: {behavioralSignals.claimsThisYear} claim(s) by this patient in the last 12mo,
+                {' '}last claim {behavioralSignals.daysSinceLastClaim >= 999 ? 'none on record' : `${behavioralSignals.daysSinceLastClaim}d ago`},
+                {' '}hospital rejection rate {Math.round((behavioralSignals.hospitalRejectionRate ?? 0) * 100)}%.
+              </p>
+            )}
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-1">
@@ -198,6 +230,16 @@ export default function XaiPanel({ xaiCid, claimId }) {
           <span className="text-xs text-gray-500">Doctor NMC:</span>
           <Badge ok={doctorVerified} trueLabel={`Verified: ${doctorName || 'Yes'}`} falseLabel={`Verification Failed: ${doctorName || 'Registry lookup failed'}`} />
         </div>
+        {domainMatch !== null && domainMatch !== undefined && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Doctor Domain:</span>
+            <Badge
+              ok={domainMatch}
+              trueLabel="Specialty matches diagnosis"
+              falseLabel={`Specialty mismatch${expectedDepartments ? ` (expected: ${expectedDepartments.join(' / ')})` : ''}`}
+            />
+          </div>
+        )}
       </div>
 
       {/* NLP reason */}
@@ -205,6 +247,14 @@ export default function XaiPanel({ xaiCid, claimId }) {
         <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">NLP Analysis</p>
           <p className="text-xs text-gray-700 leading-relaxed">{nlpReason}</p>
+        </div>
+      )}
+
+      {/* Domain mismatch reason */}
+      {domainMatch === false && domainReason && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+          <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Doctor Domain Check</p>
+          <p className="text-xs text-amber-800 leading-relaxed">{domainReason}</p>
         </div>
       )}
 
@@ -228,7 +278,7 @@ export default function XaiPanel({ xaiCid, claimId }) {
         <div>
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Grad-CAM Heatmap</p>
           <p className="text-xs text-gray-400 mb-2">Highlights regions on the bill image that the model flagged as suspicious.</p>
-          <a href={`${process.env.AI_SERVICE_URL || 'http://localhost:8000'}/heatmap/${gradcamImagePath.split('/').pop()}`}
+          <a href={`${import.meta.env.VITE_AI_SERVICE_URL || 'http://localhost:8000'}/heatmap/${gradcamImagePath.split('/').pop()}`}
              target="_blank" rel="noreferrer"
              className="inline-flex items-center gap-1.5 text-xs text-emerald-600 hover:underline">
             <ExternalLink className="w-3 h-3" /> View heatmap image

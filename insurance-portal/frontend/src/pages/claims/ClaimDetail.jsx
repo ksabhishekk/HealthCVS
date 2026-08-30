@@ -19,6 +19,7 @@ const GATEWAY = import.meta.env.VITE_PINATA_GATEWAY || 'gateway.pinata.cloud'
 const ipfsUrl = (cid) => cid ? `https://${GATEWAY}/ipfs/${cid}` : null
 
 const DOC_LABELS = {
+  hospital_bill:         'Hospital Bill / Invoice',
   insurance_card:        'Insurance Card / Policy Copy',
   employee_id:           'Employee PAN & Aadhaar',
   proposer_id:           'Proposer PAN & Aadhaar',
