@@ -3,7 +3,57 @@ import time
 import requests
 from dotenv import load_dotenv
 
+from icd_department_map import department_matches
+from verification_cache import get_cached, set_cached
+
 load_dotenv()
+
+# ── Semantic similarity model (ICD description vs prescription text) ─────────
+# Replaces the earlier TF-IDF approach, which is pure word-overlap and has no
+# notion that "hypertension" and "high blood pressure" mean the same thing.
+# Biomedical model preferred (trained on medical literature — this is the
+# "upgrade to BioBERT/ClinicalBERT" item from the project roadmap); falls back
+# to a general-purpose model if the biomedical one can't be downloaded.
+_SEMANTIC_MODEL_NAME = "pritamdeka/S-PubMedBert-MS-MARCO"
+_SEMANTIC_FALLBACK_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+_semantic_model = None
+
+# Calibrated in calibrate_semantic_threshold.py against 8 hand-built
+# (ICD description, prescription text) pairs — no real labeled claims dataset
+# exists yet (same honest limitation as the tabular model's synthetic training
+# data). Measured: true matches scored 0.883-0.904, true mismatches scored
+# 0.828-0.848 — a narrow ~0.035 margin, because biomedical BERT embeddings
+# compress similarity into a tight high range for any in-domain medical text
+# (a known property, not a bug). Set slightly toward the mismatch side to
+# avoid over-flagging legitimate claims, since this is only a 20%-weight soft
+# signal, not an auto-reject. Re-run the calibration script and revisit this
+# once real claim text accumulates — this margin is tight enough that it's
+# worth validating against real data before leaning on it heavily.
+SEMANTIC_MATCH_THRESHOLD = 0.86
+
+
+def _load_semantic_model():
+    global _semantic_model
+    if _semantic_model is None:
+        from sentence_transformers import SentenceTransformer
+        try:
+            _semantic_model = SentenceTransformer(_SEMANTIC_MODEL_NAME)
+        except Exception as e:
+            print(f"[WARN] Could not load {_SEMANTIC_MODEL_NAME} ({e}), falling back to {_SEMANTIC_FALLBACK_MODEL_NAME}")
+            _semantic_model = SentenceTransformer(_SEMANTIC_FALLBACK_MODEL_NAME)
+    return _semantic_model
+
+
+def verify_doctor_domain(icd_code: str, doctor_departments: list[str]) -> tuple[bool | None, list[str] | None, str]:
+    """
+    Cross-checks the treating doctor's department/specialization against the
+    expected specialty for the claim's ICD-10 diagnosis. Returns
+    (domain_match, expected_departments, reason). domain_match is None when
+    the check is inconclusive (missing ICD code, unmapped chapter, or no
+    department on record) — callers should treat None as "not applicable",
+    not as a fraud signal.
+    """
+    return department_matches(icd_code, doctor_departments)
 
 def verify_prescription_consistency(icd_code: str, ocr_text: str) -> tuple[bool, str]:
     """
@@ -42,32 +92,30 @@ def verify_prescription_consistency(icd_code: str, ocr_text: str) -> tuple[bool,
         if normalized_icd in normalized_ocr:
             return True, f"Found exact ICD code '{icd_code}' in OCR text. Diagnosis: {description}"
 
-        # NLP Approach: Use TF-IDF and Cosine Similarity
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        from sklearn.metrics.pairwise import cosine_similarity
-
-        # Split OCR text into lines/chunks to compare against the description
+        # Semantic approach: biomedical sentence-transformer embeddings + cosine
+        # similarity (see calibration notes at the top of this file).
         lines = [line.strip() for line in ocr_text.split('\n') if len(line.strip()) > 3]
         if not lines:
             lines = [ocr_text]
 
-        documents = [description.lower()] + [line.lower() for line in lines]
-
-        vectorizer = TfidfVectorizer(stop_words='english')
         try:
-            tfidf_matrix = vectorizer.fit_transform(documents)
-            cosine_sims = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
+            from sentence_transformers import util
 
-            max_sim = cosine_sims.max()
-            best_match_idx = cosine_sims.argmax()
+            model = _load_semantic_model()
+            desc_emb = model.encode(description.lower(), convert_to_tensor=True)
+            line_embs = model.encode([line.lower() for line in lines], convert_to_tensor=True)
+            cosine_sims = util.cos_sim(desc_emb, line_embs)[0].cpu().numpy()
+
+            max_sim = float(cosine_sims.max())
+            best_match_idx = int(cosine_sims.argmax())
             best_match_line = lines[best_match_idx]
 
-            if max_sim > 0.10:   # lowered from 0.15 — NIH descriptions are very short (3-5 words)
+            if max_sim > SEMANTIC_MATCH_THRESHOLD:
                 return True, f"Semantic match (similarity: {max_sim:.2f}). Diagnosis '{description}' matches: '{best_match_line}'."
             else:
                 return False, f"No semantic match for diagnosis: {description}. Best similarity: {max_sim:.2f}"
-        except ValueError:
-            return False, "Failed to process text for NLP similarity (empty content)."
+        except Exception as e:
+            return False, f"Failed to process text for NLP similarity: {e}"
 
     except requests.RequestException as e:
         return False, f"Error fetching ICD data: {str(e)}"
@@ -185,20 +233,28 @@ def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
         except Exception as e:
             return False, str(e)
 
-    # Verify all registration numbers in parallel using threads
-    results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(regs)) as executor:
-        futures = {executor.submit(verify_single, r): r for r in regs}
-        for future in concurrent.futures.as_completed(futures):
-            reg = futures[future]
-            try:
-                ok, name = future.result()
-                results.append((reg, ok, name))
-            except Exception as e:
-                results.append((reg, False, str(e)))
+    # Check the disk cache first — skip the 1-5 min Apify scrape entirely for
+    # any reg number verified recently. Only the cache misses go to the executor.
+    results_map = {}
+    to_verify = []
+    for r in regs:
+        cached = get_cached(r)
+        if cached is not None:
+            results_map[r] = cached
+        else:
+            to_verify.append(r)
 
-    # Map back by original order
-    results_map = {res[0]: (res[1], res[2]) for res in results}
+    if to_verify:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(to_verify)) as executor:
+            futures = {executor.submit(verify_single, r): r for r in to_verify}
+            for future in concurrent.futures.as_completed(futures):
+                reg = futures[future]
+                try:
+                    ok, name = future.result()
+                except Exception as e:
+                    ok, name = False, str(e)
+                results_map[reg] = (ok, name)
+                set_cached(reg, ok, name)
     
     verified_names = []
     all_ok = True

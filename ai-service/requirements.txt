@@ -11,3 +11,4 @@ scikit-learn
 shap
 pandas
 python-dotenv
+sentence-transformers

@@ -29,8 +29,8 @@ import numpy as np
 from pydantic import BaseModel
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from explain_tabular import get_fraud_score, explain_prediction
-from nlp_helper import verify_prescription_consistency, verify_doctor_credentials
+from explain_tabular import get_fraud_score, explain_prediction, get_hybrid_fraud_score
+from nlp_helper import verify_prescription_consistency, verify_doctor_credentials, verify_doctor_domain
 from PIL import Image
 
 try:
@@ -96,6 +96,7 @@ class NLPValidateRequest(BaseModel):
     icd_code: str
     ocr_text: str
     doctor_reg_no: str
+    doctor_departments: str = ''  # comma-separated, one per doctor — mirrors doctor_reg_no
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -192,11 +193,19 @@ async def predict_tabular_fraud(req: TabularFraudRequest):
         "amount_ceiling_ratio": req.claimed_amount / req.market_ceiling if req.market_ceiling > 0 else 0.0
     }
     
-    score = get_fraud_score(features_dict)
+    hybrid = get_hybrid_fraud_score(features_dict)
     explanations = explain_prediction(features_dict)
-    
+    explanations.append(
+        f"Unsupervised anomaly check (IsolationForest): {hybrid['anomaly_score']:.1f}/100 — "
+        f"how statistically unusual this claim's numbers are, independent of the XGBoost pattern model."
+    )
+
     return {
-        "tabular_fraud_score": round(score * 100, 2),
+        # tabular_fraud_score is now the hybrid (70% XGBoost + 30% anomaly) score —
+        # field name kept stable so oracleWorker.js needed zero changes.
+        "tabular_fraud_score": hybrid['hybrid_score'],
+        "xgboost_score": hybrid['xgboost_score'],
+        "anomaly_score": hybrid['anomaly_score'],
         "shap_explanations": explanations
     }
 
@@ -214,11 +223,17 @@ async def predict_nlp_validate(req: NLPValidateRequest):
         # Doctor check takes 1-5 min (NMC scraper) — wait for full result
         is_verified, doc_name = doc_future.result(timeout=360)
 
+    departments = [d.strip() for d in req.doctor_departments.split(',') if d.strip()]
+    domain_match, expected_departments, domain_reason = verify_doctor_domain(req.icd_code, departments)
+
     return {
         "prescription_consistent": is_consistent,
         "nlp_reason": reason,
         "doctor_verified": is_verified,
-        "doctor_name": doc_name
+        "doctor_name": doc_name,
+        "domain_match": domain_match,
+        "expected_departments": expected_departments,
+        "domain_reason": domain_reason,
     }
 
 
