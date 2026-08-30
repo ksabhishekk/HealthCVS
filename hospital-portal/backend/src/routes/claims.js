@@ -3,14 +3,11 @@ const { authenticate, requireAdmin } = require('../middleware/auth')
 const {
   submitClaimToBlockchain,
   authenticateClaimOnBlockchain,
-  updateFraudScoreOnBlockchain,
-  adjudicateClaimOnBlockchain,
-  insurerReviewOnBlockchain,
-  settleClaimOnBlockchain,
   getContracts,
 } = require('../services/blockchain')
 const { uploadToPinata, ipfsGatewayUrl } = require('../services/pinata')
 const Patient = require('../models/Patient')
+const ClaimConsent = require('../models/ClaimConsent')
 
 const router = express.Router()
 router.use(authenticate)
@@ -175,6 +172,30 @@ router.post('/submit', async (req, res) => {
     }
     if (!aadhaarHash) return res.status(400).json({ error: 'aadhaarHash or aadhaarNumber required' })
 
+    // --- Patient consent gate (hospital-patient collusion mitigation) ---
+    // Requires a verified OTP consentToken tied to the exact contact number on
+    // this claim before it's allowed to reach the blockchain. REQUIRE_PATIENT_CONSENT
+    // is an escape hatch (default: required) in case the OTP flow needs to be
+    // bypassed during a live demo — mirrors the ai-service's MOCK_DOCTOR_VERIFY pattern.
+    let consentRecord = null
+    if (process.env.REQUIRE_PATIENT_CONSENT !== 'false') {
+      const { consentToken } = claimData
+      const contactNumber = claimData.admission?.contactNumber || claimData.patient?.contactNumber
+      if (!consentToken) {
+        return res.status(400).json({ error: 'Patient consent (OTP) is required before submitting this claim.' })
+      }
+      consentRecord = await ClaimConsent.findOne({ consentToken, verified: true, consumed: false })
+      if (!consentRecord) {
+        return res.status(400).json({ error: 'Patient consent token is invalid, expired, or already used. Re-verify OTP.' })
+      }
+      if (contactNumber && consentRecord.contactNumber !== contactNumber) {
+        return res.status(400).json({ error: 'Patient consent was verified for a different contact number than this claim.' })
+      }
+      // Not consumed yet — only burned after the claim actually reaches the
+      // blockchain successfully, near the end of this handler, so a failed
+      // submission doesn't force the clerk to redo the OTP for a valid retry.
+    }
+
     // --- Validate medical data ---
     const procedures = claimData.medical?.procedures || []
     const doctors = claimData.medical?.doctors || []
@@ -236,6 +257,9 @@ router.post('/submit', async (req, res) => {
         isPlannedSurgery: claimData.medical.isPlannedSurgery,
       },
       documents: claimData.documents,
+      consent: consentRecord
+        ? { verified: true, verifiedAt: consentRecord.verifiedAt, contactNumberLast4: consentRecord.contactNumber.slice(-4) }
+        : { verified: false },
       submittedBy: req.user.name,
       submittedAt: new Date().toISOString(),
     }
@@ -245,7 +269,7 @@ router.post('/submit', async (req, res) => {
 
     // --- Map document CID slots ---
     const findCid = (type) => (claimData.documents || []).find(d => d.type === type)?.cid || ''
-    const cidBill = findCid('insurance_card')
+    const cidBill = findCid('hospital_bill')
     const cidPrescription = findCid('consultation_papers')
     const cidDischarge = metadataCid
 
@@ -265,6 +289,12 @@ router.post('/submit', async (req, res) => {
         { aadhaarHash },
         { activePolicyId: claimData.insurance.policyNumber, activeInsuranceCompany: claimData.insurance.company }
       )
+    }
+
+    // Claim reached the chain successfully — now safe to burn the consent token
+    if (consentRecord) {
+      consentRecord.consumed = true
+      await consentRecord.save()
     }
 
     res.json({
@@ -290,52 +320,12 @@ router.post('/:id/authenticate', requireAdmin, async (req, res) => {
   }
 })
 
-// POST /api/claims/:id/fraud-score — TX4: write AI fraud score on-chain (admin/oracle)
-router.post('/:id/fraud-score', requireAdmin, async (req, res) => {
-  try {
-    const { fraudScore } = req.body
-    if (fraudScore === undefined || fraudScore === null) {
-      return res.status(400).json({ error: 'fraudScore (0–100) is required' })
-    }
-    const { txHash } = await updateFraudScoreOnBlockchain(Number(req.params.id), Number(fraudScore))
-    res.json({ success: true, txHash, fraudScore: Number(fraudScore) })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-// POST /api/claims/:id/adjudicate — TX5: run automated adjudication rules engine (admin)
-router.post('/:id/adjudicate', requireAdmin, async (req, res) => {
-  try {
-    const { txHash, approved, reason } = await adjudicateClaimOnBlockchain(Number(req.params.id))
-    res.json({ success: true, txHash, approved, reason })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-// POST /api/claims/:id/insurer-review — TX6: insurer approves or rejects the claim (admin)
-router.post('/:id/insurer-review', requireAdmin, async (req, res) => {
-  try {
-    const { approve } = req.body
-    if (approve === undefined || approve === null) {
-      return res.status(400).json({ error: 'approve (true/false) is required' })
-    }
-    const { txHash, approved } = await insurerReviewOnBlockchain(Number(req.params.id), Boolean(approve))
-    res.json({ success: true, txHash, approved })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-// POST /api/claims/:id/settle — TX7: settle the claim (admin)
-router.post('/:id/settle', requireAdmin, async (req, res) => {
-  try {
-    const { txHash } = await settleClaimOnBlockchain(Number(req.params.id))
-    res.json({ success: true, txHash })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
+// TX4 (fraud score), TX5 (adjudicate), TX6 (insurer review), and TX7 (settle) are
+// intentionally NOT exposed here. The hospital backend's signing wallet
+// (HOSPITAL_WALLET_PRIVATE_KEY) only holds HOSPITAL_CLERK_ROLE + DOCTOR_ROLE on
+// RoleManager (see scripts/grantRoles.js) — those on-chain functions require
+// INSURER_ROLE or DEFAULT_ADMIN_ROLE and would revert if called from here.
+// They're correctly implemented, with proper role checks, in the insurance
+// portal's routes/claims.js.
 
 module.exports = router
