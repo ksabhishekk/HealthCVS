@@ -316,12 +316,50 @@ router.post('/submit', async (req, res) => {
       cidDischarge,
     })
 
-    // Update patient's known policy in local DB
-    if (claimData.insurance?.policyNumber) {
+    // Persist the patient locally.
+    // The claim wizard lets a clerk enter a brand-new patient inline, but that
+    // path never created a Patient record — the details only ever lived inside
+    // the claim's metadata. The policy update below used findOneAndUpdate with
+    // no upsert, so for a new patient it silently matched nothing. The result
+    // was that looking the same Aadhaar up for a second claim reported "no
+    // patient exists". Upserting here makes the inline path register the
+    // patient properly, while leaving an existing record's demographics alone.
+    try {
+      const p = claimData.patient || {}
+      const setOnInsert = {
+        aadhaarHash,
+        aadhaarLast4:  p.aadhaarLast4 || (claimData.aadhaarNumber || '').slice(-4),
+        name:          p.name,
+        dateOfBirth:   p.dateOfBirth,
+        gender:        p.gender,
+        contactNumber: p.contactNumber || claimData.admission?.contactNumber,
+        panNumber:     p.panNumber,
+        bloodGroup:    p.bloodGroup,
+        address:       p.address,
+        registeredBy:  req.user?._id,
+      }
+      // Mongoose rejects undefined keys in $setOnInsert alongside upsert.
+      for (const k of Object.keys(setOnInsert)) {
+        if (setOnInsert[k] === undefined || setOnInsert[k] === '') delete setOnInsert[k]
+      }
+
+      const set = {}
+      if (claimData.insurance?.policyNumber) {
+        set.activePolicyId = claimData.insurance.policyNumber
+        set.activeInsuranceCompany = claimData.insurance.company
+      }
+
+      // Only upsert when we have enough to satisfy the schema's required fields;
+      // otherwise fall back to updating an existing record and leave it at that.
+      const canCreate = setOnInsert.name && setOnInsert.dateOfBirth && setOnInsert.gender && setOnInsert.contactNumber
       await Patient.findOneAndUpdate(
         { aadhaarHash },
-        { activePolicyId: claimData.insurance.policyNumber, activeInsuranceCompany: claimData.insurance.company }
+        { $setOnInsert: setOnInsert, ...(Object.keys(set).length ? { $set: set } : {}) },
+        { upsert: canCreate, setDefaultsOnInsert: true },
       )
+    } catch (e) {
+      // Never fail a claim that already reached the chain over a local record.
+      console.warn(`[Claims] Could not persist patient locally: ${e.message}`)
     }
 
     // Claim reached the chain successfully — now safe to burn the consent token

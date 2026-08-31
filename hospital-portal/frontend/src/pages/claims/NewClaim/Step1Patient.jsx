@@ -47,8 +47,8 @@ export default function Step1Patient({ data, update, onNext }) {
   }
 
   const canProceed = () => {
-    if (!data.admission.admissionDate || !data.admission.contactNumber) return false
-    if (mode === 'new' && (!newPatient.name || !newPatient.dateOfBirth || !newPatient.gender || !newPatient.contactNumber)) return false
+    if (!data.admission.admissionDate || !/^\d{10}$/.test(data.admission.contactNumber || '')) return false
+    if (mode === 'new' && (!newPatient.name || !newPatient.dateOfBirth || !newPatient.gender || !/^\d{10}$/.test(newPatient.contactNumber))) return false
     return data.patient !== null || (mode === 'new' && newPatient.name)
   }
 
@@ -148,6 +148,9 @@ export default function Step1Patient({ data, update, onNext }) {
             <div>
               <label className="label">Contact Number <span className="text-red-500">*</span></label>
               <input className="input" value={newPatient.contactNumber} onChange={e => setNew('contactNumber', e.target.value.replace(/\D/g, '').slice(0, 10))} placeholder="10-digit mobile" />
+              {newPatient.contactNumber.length > 0 && newPatient.contactNumber.length < 10 && (
+                <p className="text-xs text-red-600 mt-1">Mobile number must be 10 digits ({newPatient.contactNumber.length}/10).</p>
+              )}
             </div>
             <div className="col-span-2">
               <label className="label">Address</label>
@@ -171,13 +174,17 @@ export default function Step1Patient({ data, update, onNext }) {
             <label className="label">Discharge Date</label>
             <input type="date" className="input" value={data.admission.dischargeDate}
               onChange={e => update({ admission: { ...data.admission, dischargeDate: e.target.value } })}
-              min={data.admission.admissionDate} />
+              min={data.admission.admissionDate}
+              max={new Date().toISOString().split('T')[0]} />
           </div>
           <div>
             <label className="label">Contact No. at Admission <span className="text-red-500">*</span></label>
             <input className="input" value={data.admission.contactNumber}
               placeholder="Patient contact"
               onChange={e => update({ admission: { ...data.admission, contactNumber: e.target.value.replace(/\D/g, '').slice(0, 10) } })} />
+            {(data.admission.contactNumber || '').length > 0 && (data.admission.contactNumber || '').length < 10 && (
+              <p className="text-xs text-red-600 mt-1">Mobile number must be 10 digits ({(data.admission.contactNumber || '').length}/10).</p>
+            )}
           </div>
         </div>
       </div>

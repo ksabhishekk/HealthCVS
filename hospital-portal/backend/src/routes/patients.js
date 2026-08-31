@@ -49,7 +49,7 @@ router.post('/',
   body('aadhaarNumber').isLength({ min: 12, max: 12 }).isNumeric().withMessage('Aadhaar must be 12 digits'),
   body('dateOfBirth').isISO8601(),
   body('gender').isIn(['male', 'female', 'other']),
-  body('contactNumber').notEmpty().trim(),
+  body('contactNumber').matches(/^\d{10}$/).withMessage('Contact number must be exactly 10 digits'),
   async (req, res) => {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() })
