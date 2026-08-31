@@ -60,8 +60,8 @@ export default function Step3Medical({ data, update, onNext, onBack }) {
     const updated = med.procedures.map((p, idx) =>
       idx === i
         ? (found
-            ? { code: found.code, name: found.name, claimedAmount: String(found.ceilingAmount || ''), ceilingAmount: found.ceilingAmount || null }
-            : { code: '', name: '', claimedAmount: '', ceilingAmount: null })
+            ? { code: found.code, name: found.name, claimedAmount: String(found.ceilingAmount || ''), ceilingAmount: found.ceilingAmount || null, category: found.category || '' }
+            : { code: '', name: '', claimedAmount: '', ceilingAmount: null, category: '' })
         : p
     )
     setMed({ procedures: updated })

@@ -110,15 +110,65 @@ def verify_prescription_consistency(icd_code: str, ocr_text: str) -> tuple[bool,
             best_match_idx = int(cosine_sims.argmax())
             best_match_line = lines[best_match_idx]
 
+            # The similarity is returned alongside the verdict so the caller can
+            # score it on a gradient. Thresholding it to a hard yes/no here threw
+            # away almost all the information: real claims were landing at 0.84-0.85
+            # against a 0.86 cut-off and being scored as maximally inconsistent,
+            # which is a false positive on an obviously-correct diagnosis.
             if max_sim > SEMANTIC_MATCH_THRESHOLD:
-                return True, f"Semantic match (similarity: {max_sim:.2f}). Diagnosis '{description}' matches: '{best_match_line}'."
+                return True, f"Semantic match (similarity: {max_sim:.2f}). Diagnosis '{description}' matches: '{best_match_line}'.", max_sim
             else:
-                return False, f"No semantic match for diagnosis: {description}. Best similarity: {max_sim:.2f}"
+                return False, f"No semantic match for diagnosis: {description}. Best similarity: {max_sim:.2f}", max_sim
         except Exception as e:
             return False, f"Failed to process text for NLP similarity: {e}"
 
     except requests.RequestException as e:
         return False, f"Error fetching ICD data: {str(e)}"
+
+def _normalise_name(name: str) -> set:
+    """Lowercase, drop honorifics and punctuation, return the set of name tokens."""
+    import re as _re
+    cleaned = _re.sub(r"[^a-z\s]", " ", (name or "").lower())
+    drop = {"dr", "doctor", "prof", "mr", "mrs", "ms", "shri", "smt"}
+    return {t for t in cleaned.split() if t and t not in drop}
+
+
+def match_doctor_names(claimed: str, registry: str) -> tuple[bool, str]:
+    """
+    Compare the doctor name on the claim against the name the NMC registry
+    returned for that registration number.
+
+    Verifying only that a registration number exists proves the *number* is
+    real, not that the doctor on the claim is the person it belongs to — a
+    hospital could attach any genuine registration number to any name and pass.
+    Token-set overlap (rather than exact match) tolerates honorifics, middle
+    names and reordering, which differ legitimately between the two sources.
+    """
+    claimed_list = [c.strip() for c in (claimed or "").split(",") if c.strip()]
+    registry_list = [r.strip() for r in (registry or "").split(",") if r.strip()]
+
+    if not claimed_list or not registry_list:
+        return True, "No claimed doctor name supplied — name check skipped"
+
+    mismatches = []
+    for i, reg_name in enumerate(registry_list):
+        if i >= len(claimed_list):
+            break
+        if reg_name.lower().startswith(("unverified", "invalid format", "mock doctor")):
+            continue  # the number itself failed; that is reported separately
+        reg_tokens = _normalise_name(reg_name)
+        claim_tokens = _normalise_name(claimed_list[i])
+        if not reg_tokens or not claim_tokens:
+            continue
+        overlap = reg_tokens & claim_tokens
+        smaller = min(len(reg_tokens), len(claim_tokens))
+        if len(overlap) / smaller < 0.5:
+            mismatches.append(f"claim says '{claimed_list[i]}' but the registry returns '{reg_name}'")
+
+    if mismatches:
+        return False, "Doctor name does not match the registration number: " + "; ".join(mismatches)
+    return True, "Doctor names match the registry"
+
 
 def verify_doctor_credentials(reg_no: str) -> tuple[bool, str]:
     """

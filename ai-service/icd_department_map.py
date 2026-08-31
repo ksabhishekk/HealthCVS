@@ -106,3 +106,47 @@ def department_matches(icd_code: str, doctor_departments: list[str]):
         f"Treating doctor department(s) [{', '.join(cleaned)}] do not match the expected "
         f"specialty for this diagnosis ({', '.join(expected)}).",
     )
+
+
+def procedure_matches(icd_code: str, procedure_categories: list[str]):
+    """
+    Check that at least one billed procedure belongs to a specialty that
+    plausibly treats this diagnosis.
+
+    Nothing previously linked the billed procedure to the diagnosis — the same
+    procedure code was billed against a brain tumour and against influenza on
+    consecutive claims and neither was flagged. Billing an expensive procedure
+    for a cheap condition (upcoding) is a common real-world claim fraud.
+
+    A semantic-similarity approach was tried first and rejected: procedure names
+    and diagnosis descriptions are different *kinds* of text (a treatment vs a
+    condition), and the biomedical embedding model separated valid from invalid
+    pairs by only 0.001 — see calibrate_procedure_threshold.py. This reuses the
+    same chapter mapping the doctor-domain check already relies on, which is
+    deterministic and explainable.
+
+    Returns (match, expected_departments, reason). match is None when the check
+    cannot run — an unmapped ICD chapter, or procedures with no category on
+    record — which is "not applicable", not a fraud signal.
+    """
+    expected = expected_departments_for_icd(icd_code)
+    if not expected:
+        return None, None, f"No department mapping available for ICD code '{icd_code}'."
+
+    cats = [c.strip().lower() for c in (procedure_categories or []) if c and c.strip()]
+    if not cats:
+        return None, expected, "No procedure category on record to check."
+
+    # One plausible procedure is enough: multi-procedure claims legitimately
+    # bundle supporting work alongside the main treatment.
+    for cat in cats:
+        for dept in expected:
+            if cat == dept or cat in dept or dept in cat:
+                return True, expected, f"Billed procedure category '{cat}' matches the expected specialty for this diagnosis."
+
+    return (
+        False,
+        expected,
+        f"Billed procedure categories {cats} do not match any specialty that treats this diagnosis "
+        f"({', '.join(expected)}) — a procedure unrelated to the diagnosis may indicate upcoding.",
+    )

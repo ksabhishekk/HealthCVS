@@ -182,6 +182,8 @@ async function processClaimAI(claimId) {
     const doctors = ipfsData?.medical?.doctors || []
     const docRegs = doctors.map(d => d.registrationNumber).filter(Boolean).join(', ')
     const docDepts = doctors.map(d => d.department || d.specialization).filter(Boolean).join(', ')
+    const docNames = doctors.map(d => d.name).filter(Boolean).join(', ')
+    const procCats = (ipfsData?.medical?.procedures || []).map(p => p.category).filter(Boolean).join(', ')
 
     claim = new Claim({
       blockchainClaimId:        claimId,
@@ -189,6 +191,8 @@ async function processClaimAI(claimId) {
       prescriptionText:         ipfsData?.medical?.diagnosis              || '',
       doctorRegistrationNumber: docRegs,
       doctorDepartments:        docDepts,
+      doctorNames:              docNames,
+      procedureCategories:      procCats,
       claimedAmount:            ipfsData?.medical?.totalClaimedAmount     || 0,
       marketCeiling:            marketCeiling || 50000,
       hospitalType:             'private',
@@ -216,6 +220,11 @@ async function processClaimAI(claimId) {
   // routes/claims.js findCid('hospital_bill')) — a real itemized bill image,
   // not a proxy document.
   let cvResult = { tamper_probability: 0, is_suspicious: false, ocr_text: '', heatmap_file: null }
+  // Whether the CV model actually produced a verdict. Without this, a crashed
+  // analyser and a genuinely clean document are indistinguishable (both 0),
+  // and since CV carries 30% of the weight a failure quietly makes a claim
+  // look *safer* than it should.
+  let cvAvailable = false
   let tempDocPath = null
   try {
     let docPath = (claim.localDocumentPath && fs.existsSync(claim.localDocumentPath)) ? claim.localDocumentPath : null
@@ -242,6 +251,7 @@ async function processClaimAI(claimId) {
         timeout: 60000,
       })
       cvResult = cvRes.data
+      cvAvailable = true
       console.log(`[Oracle] CV done — tamper: ${cvResult.tamper_probability}%`)
     } else {
       console.warn(`[Oracle] No document available for claim #${claimId} (no on-chain cidBill). CV score defaults to 0.`)
@@ -287,6 +297,8 @@ async function processClaimAI(claimId) {
       ocr_text:           ocrText,
       doctor_reg_no:      claim.doctorRegistrationNumber || '',
       doctor_departments: claim.doctorDepartments         || '',
+      doctor_names:       claim.doctorNames               || '',
+      procedure_categories: claim.procedureCategories     || '',
     },
     { timeout: 420000 }  // 7 min — Apify scraper can take up to 5 min
   )
@@ -296,7 +308,17 @@ async function processClaimAI(claimId) {
   const cvScore       = cvResult.tamper_probability        // 0–100
   const nlpConsistent = nlpRes.data.prescription_consistent
   const doctorOk      = nlpRes.data.doctor_verified
-  const nlpScore      = nlpConsistent ? 0 : 100
+  // Score the diagnosis/prescription match on a gradient rather than 0-or-100.
+  // The old binary form turned a 0.84 similarity into a maximum 100 penalty
+  // while 0.87 scored 0 — a two-point swing in the final score of 20 points on
+  // a hundredth of a similarity point. Real claims were landing right on that
+  // line and being false-flagged. Below FULL_RISK_SIM counts as fully
+  // inconsistent, above NO_RISK_SIM as fully consistent, linear in between.
+  const NO_RISK_SIM = 0.90, FULL_RISK_SIM = 0.75
+  const semanticSimilarity = nlpRes.data.semantic_similarity
+  const nlpScore = (typeof semanticSimilarity === 'number')
+    ? Math.round(Math.min(Math.max((NO_RISK_SIM - semanticSimilarity) / (NO_RISK_SIM - FULL_RISK_SIM), 0), 1) * 100)
+    : (nlpConsistent ? 0 : 100)   // fall back to binary if the similarity is unavailable
 
   // domainMatch is null when the check was inconclusive (unmapped ICD chapter,
   // missing department data) — that's "not applicable", not a fraud signal.
@@ -307,9 +329,18 @@ async function processClaimAI(claimId) {
   console.log(`[Oracle] Scores — Tabular: ${tabularScore}, CV: ${cvScore}, NLP: ${nlpScore}`)
 
   // 4. Weighted ensemble (50 / 30 / 20)
+  // If the CV check didn't run, drop its term and renormalise the remaining
+  // weights rather than feeding in a 0. Scoring a missing signal as "clean"
+  // understates risk by up to 30 points; renormalising keeps the result on the
+  // same 0-100 scale and honestly reflects that it rests on fewer signals.
+  const W_TABULAR = 0.50, W_CV = 0.30, W_NLP = 0.20
+  const usedWeight = W_TABULAR + W_NLP + (cvAvailable ? W_CV : 0)
   let finalScore = Math.round(
-    (tabularScore * 0.50) + (cvScore * 0.30) + (nlpScore * 0.20)
+    ((tabularScore * W_TABULAR) + (cvAvailable ? cvScore * W_CV : 0) + (nlpScore * W_NLP)) / usedWeight
   )
+  if (!cvAvailable) {
+    console.warn(`[Oracle] CV unavailable — scoring on tabular + NLP only, weights renormalised (${usedWeight.toFixed(2)})`)
+  }
 
   // Override: unverified doctor floors score at 75 (auto-reject threshold) —
   // this is an identity-fraud signal (the doctor may not even be real).
@@ -328,6 +359,31 @@ async function processClaimAI(claimId) {
     finalScore = Math.max(finalScore, 60)
   }
 
+  // Override: the registration number is genuine, but it belongs to someone
+  // other than the doctor named on the claim. Verifying the number alone only
+  // proves the number exists — this catches a real credential being attached
+  // to a different name. Floored to manual review (60) rather than 75, since
+  // transliteration and name-format differences are plausible and a human
+  // should make the call.
+  const doctorNameMatch  = nlpRes.data.doctor_name_match
+  const doctorNameReason = nlpRes.data.doctor_name_reason || ''
+
+  // Override: the billed procedure belongs to a specialty that doesn't treat
+  // this diagnosis (e.g. neurosurgery billed against influenza). Classic
+  // upcoding. Floored to manual review rather than auto-reject — bundled
+  // supporting procedures are legitimate and a human should judge.
+  const procedureMatch  = nlpRes.data.procedure_match
+  const procedureReason = nlpRes.data.procedure_reason || ''
+  if (doctorNameMatch === false) {
+    console.warn(`[Oracle] Doctor name mismatch — flooring score to max(${finalScore}, 60). ${doctorNameReason}`)
+    finalScore = Math.max(finalScore, 60)
+  }
+
+  if (procedureMatch === false) {
+    console.warn(`[Oracle] Procedure/diagnosis mismatch — flooring score to max(${finalScore}, 60). ${procedureReason}`)
+    finalScore = Math.max(finalScore, 60)
+  }
+
   finalScore = Math.min(Math.max(finalScore, 0), 100)
   console.log(`[Oracle] Final fraud score: ${finalScore}/100`)
 
@@ -335,7 +391,8 @@ async function processClaimAI(claimId) {
   const xaiPayload = {
     claimId,
     finalFraudScore: finalScore,
-    weights:    { tabular: 0.50, cv: 0.30, nlp: 0.20 },
+    weights:    { tabular: W_TABULAR, cv: cvAvailable ? W_CV : 0, nlp: W_NLP },
+    cvAvailable,  // false = document check did not run; score rests on fewer signals
     components: {
       tabularScore,
       // tabularScore itself is already the hybrid (70% XGBoost + 30% IsolationForest
@@ -346,6 +403,11 @@ async function processClaimAI(claimId) {
       nlpScore,
       nlpConsistent,
       doctorVerified: doctorOk,
+      doctorNameMatch,
+      doctorNameReason,
+      procedureMatch,
+      procedureReason,
+      semanticSimilarity: semanticSimilarity ?? null,
       domainMatch,
       expectedDepartments,
       domainReason,

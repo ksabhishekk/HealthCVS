@@ -28,6 +28,8 @@ const ClaimSchema = new mongoose.Schema(
     prescriptionText:         { type: String, default: '' },
     doctorRegistrationNumber: { type: String, default: '' },
     doctorDepartments:        { type: String, default: '' },  // comma-separated, aligned with doctorRegistrationNumber
+    doctorNames:              { type: String, default: '' },  // comma-separated, aligned with doctorRegistrationNumber
+    procedureCategories:      { type: String, default: '' },  // comma-separated, one per billed procedure
 
     // ── Document path (used by Member A's CV / forgery detector) ─────────────
     // Local path to cached bill image. Populated when hospital submits the claim.

@@ -57,6 +57,26 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
+@app.on_event("startup")
+def _warm_models():
+    """
+    Load the biomedical sentence-transformer before serving traffic.
+
+    It was previously loaded lazily on first use, inside the 30s budget that
+    /predict/nlp-validate gives the ICD check — so the first claim scored after
+    every restart died with a TimeoutError while the model was still loading.
+    Warming it here moves that cost to startup, where it belongs, and means the
+    model is fetched once at boot rather than mid-demo.
+    """
+    try:
+        from nlp_helper import _load_semantic_model
+        _load_semantic_model()
+        print("Semantic model warmed and ready")
+    except Exception as e:
+        # Never block startup on this — the endpoint still loads lazily if needed.
+        print(f"[WARN] Could not warm semantic model at startup ({e}); it will load on first use")
+
 MODEL_PATH = "forgery_detector_best_phase2.keras"
 
 if TF_AVAILABLE:
@@ -97,6 +117,8 @@ class NLPValidateRequest(BaseModel):
     ocr_text: str
     doctor_reg_no: str
     doctor_departments: str = ''  # comma-separated, one per doctor — mirrors doctor_reg_no
+    doctor_names: str = ''
+    procedure_categories: str = ''  # comma-separated, one per billed procedure
 
 # ---------------------------------------------------------------------------
 # Endpoints
@@ -218,22 +240,37 @@ async def predict_nlp_validate(req: NLPValidateRequest):
         doc_future = executor.submit(verify_doctor_credentials, req.doctor_reg_no)
 
         # ICD check is fast (few seconds) — always wait for it
-        is_consistent, reason = icd_future.result(timeout=30)
+        # Tolerate the 2-tuple returned by the non-semantic error paths.
+        icd_result = icd_future.result(timeout=30)
+        is_consistent, reason = icd_result[0], icd_result[1]
+        semantic_similarity = icd_result[2] if len(icd_result) > 2 else None
 
         # Doctor check takes 1-5 min (NMC scraper) — wait for full result
         is_verified, doc_name = doc_future.result(timeout=360)
 
+    from nlp_helper import match_doctor_names
+    name_match, name_reason = match_doctor_names(req.doctor_names, doc_name)
+
     departments = [d.strip() for d in req.doctor_departments.split(',') if d.strip()]
     domain_match, expected_departments, domain_reason = verify_doctor_domain(req.icd_code, departments)
+
+    from icd_department_map import procedure_matches
+    proc_cats = [c.strip() for c in req.procedure_categories.split(',') if c.strip()]
+    procedure_match, _proc_expected, procedure_reason = procedure_matches(req.icd_code, proc_cats)
 
     return {
         "prescription_consistent": is_consistent,
         "nlp_reason": reason,
+        "semantic_similarity": semantic_similarity,
         "doctor_verified": is_verified,
         "doctor_name": doc_name,
+        "doctor_name_match": name_match,
+        "doctor_name_reason": name_reason,
         "domain_match": domain_match,
         "expected_departments": expected_departments,
         "domain_reason": domain_reason,
+        "procedure_match": procedure_match,
+        "procedure_reason": procedure_reason,
     }
 
 
