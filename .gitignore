@@ -33,3 +33,6 @@ ai-service/venv/
 
 # Local working notes
 notes/
+
+# AI service runtime cache (regenerated on demand)
+ai-service/doctor_verification_cache.json
