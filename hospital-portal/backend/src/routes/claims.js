@@ -188,12 +188,45 @@ router.post('/submit', async (req, res) => {
       if (!consentRecord) {
         return res.status(400).json({ error: 'Patient consent token is invalid, expired, or already used. Re-verify OTP.' })
       }
-      if (contactNumber && consentRecord.contactNumber !== contactNumber) {
+      // Bound to the patient, not the phone number — the OTP destination now
+       // comes from the insurer's records and can legitimately differ from the
+       // number typed on the claim form. Falls back to the number for consent
+       // records created before aadhaarHash was stored.
+      if (consentRecord.aadhaarHash) {
+        if (consentRecord.aadhaarHash !== aadhaarHash) {
+          return res.status(400).json({ error: 'Patient consent was verified for a different patient than this claim.' })
+        }
+      } else if (contactNumber && consentRecord.contactNumber !== contactNumber) {
         return res.status(400).json({ error: 'Patient consent was verified for a different contact number than this claim.' })
       }
       // Not consumed yet — only burned after the claim actually reaches the
       // blockchain successfully, near the end of this handler, so a failed
       // submission doesn't force the clerk to redo the OTP for a valid retry.
+    }
+
+    // --- Validate admission / discharge dates ---
+    // A claim for a discharge that hasn't happened yet is billing for treatment
+    // that isn't complete. Nothing checked this before, so a future discharge
+    // date passed straight through to the chain.
+    const admissionDate = claimData.admission?.admissionDate ? new Date(claimData.admission.admissionDate) : null
+    const dischargeDate = claimData.admission?.dischargeDate ? new Date(claimData.admission.dischargeDate) : null
+    const endOfToday = new Date()
+    endOfToday.setHours(23, 59, 59, 999)
+
+    if (admissionDate && isNaN(admissionDate.getTime())) {
+      return res.status(400).json({ error: 'Admission date is not a valid date.' })
+    }
+    if (dischargeDate && isNaN(dischargeDate.getTime())) {
+      return res.status(400).json({ error: 'Discharge date is not a valid date.' })
+    }
+    if (admissionDate && admissionDate > endOfToday) {
+      return res.status(400).json({ error: 'Admission date is in the future. A claim cannot be filed for an admission that has not happened.' })
+    }
+    if (dischargeDate && dischargeDate > endOfToday) {
+      return res.status(400).json({ error: 'Discharge date is in the future. A claim cannot be filed before the patient is discharged.' })
+    }
+    if (admissionDate && dischargeDate && dischargeDate < admissionDate) {
+      return res.status(400).json({ error: 'Discharge date is before the admission date.' })
     }
 
     // --- Validate medical data ---
