@@ -3,6 +3,23 @@ const ClaimSubmissionABI = require('../abis/ClaimSubmission.json')
 const PatientRegistryABI = require('../abis/PatientRegistry.json')
 const AutoAdjudicationABI = require('../abis/AutoAdjudication.json')
 
+// Ganache's eth_estimateGas under-reports for any function guarded by a role
+// modifier: it misses the EIP-2929 cold-access cost (~2.5k gas) of the external
+// call into RoleManager, so ethers sends a limit a few percent short and the
+// transaction dies with "out of gas". Padding the estimate is free — unused gas
+// is refunded and the limit is only a ceiling, so this is safe on Amoy too.
+const sendTx = async (contract, method, args) => {
+  const overrides = {}
+  try {
+    const estimated = await contract[method].estimateGas(...args)
+    overrides.gasLimit = (estimated * 3n) / 2n
+  } catch {
+    // Estimation itself failed (usually a genuine revert) — send without an
+    // override so the node surfaces its own error rather than this one.
+  }
+  return contract[method](...args, overrides)
+}
+
 let _provider, _wallet, _oracleWallet, _claimSubmission, _claimSubmissionOracle, _patientRegistry, _autoAdjudication
 
 const getContracts = () => {
@@ -41,7 +58,7 @@ const registerPatientOnBlockchain = async ({ aadhaarHash, walletAddress, policyI
   const { patientRegistry } = getContracts()
   if (!patientRegistry) throw new Error('PatientRegistry contract not available')
   const effectiveWallet = (walletAddress && walletAddress !== ethers.ZeroAddress) ? walletAddress : ethers.ZeroAddress
-  const tx = await patientRegistry.registerPatient(aadhaarHash, effectiveWallet, policyId || '')
+  const tx = await sendTx(patientRegistry, 'registerPatient', [aadhaarHash, effectiveWallet, policyId || ''])
   const receipt = await tx.wait()
   return { txHash: receipt.hash }
 }
@@ -50,7 +67,7 @@ const registerPatientOnBlockchain = async ({ aadhaarHash, walletAddress, policyI
 const updatePatientWalletOnBlockchain = async (aadhaarHash, walletAddress) => {
   const { patientRegistry } = getContracts()
   if (!patientRegistry) throw new Error('PatientRegistry contract not available')
-  const tx = await patientRegistry.updateWallet(aadhaarHash, walletAddress)
+  const tx = await sendTx(patientRegistry, 'updateWallet', [aadhaarHash, walletAddress])
   const receipt = await tx.wait()
   return { txHash: receipt.hash }
 }
@@ -61,7 +78,7 @@ const updateFraudScoreOnBlockchain = async (claimId, score) => {
   const { claimSubmissionOracle } = getContracts()
   if (!claimSubmissionOracle) throw new Error('ClaimSubmission contract not deployed')
   if (score < 0 || score > 100) throw new Error('Fraud score must be 0–100')
-  const tx = await claimSubmissionOracle.updateFraudScore(BigInt(claimId), BigInt(score))
+  const tx = await sendTx(claimSubmissionOracle, 'updateFraudScore', [BigInt(claimId), BigInt(score)])
   const receipt = await tx.wait()
   return { txHash: receipt.hash }
 }
@@ -70,7 +87,7 @@ const updateFraudScoreOnBlockchain = async (claimId, score) => {
 const adjudicateClaimOnBlockchain = async (claimId) => {
   const { autoAdjudication } = getContracts()
   if (!autoAdjudication) throw new Error('AutoAdjudication contract not deployed')
-  const tx = await autoAdjudication.adjudicateClaim(BigInt(claimId))
+  const tx = await sendTx(autoAdjudication, 'adjudicateClaim', [BigInt(claimId)])
   const receipt = await tx.wait()
 
   let approved = null, approvedAmount = null, reason = null
@@ -93,7 +110,7 @@ const adjudicateClaimOnBlockchain = async (claimId) => {
 const insurerReviewOnBlockchain = async (claimId, approve) => {
   const { autoAdjudication } = getContracts()
   if (!autoAdjudication) throw new Error('AutoAdjudication contract not deployed')
-  const tx = await autoAdjudication.insurerReview(BigInt(claimId), approve)
+  const tx = await sendTx(autoAdjudication, 'insurerReview', [BigInt(claimId), approve])
   const receipt = await tx.wait()
   return { txHash: receipt.hash, approved: approve }
 }
@@ -102,7 +119,7 @@ const insurerReviewOnBlockchain = async (claimId, approve) => {
 const settleClaimOnBlockchain = async (claimId) => {
   const { autoAdjudication } = getContracts()
   if (!autoAdjudication) throw new Error('AutoAdjudication contract not deployed')
-  const tx = await autoAdjudication.settleClaim(BigInt(claimId))
+  const tx = await sendTx(autoAdjudication, 'settleClaim', [BigInt(claimId)])
   const receipt = await tx.wait()
   return { txHash: receipt.hash }
 }
