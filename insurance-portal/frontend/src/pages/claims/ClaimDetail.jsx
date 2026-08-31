@@ -30,21 +30,26 @@ const DOC_LABELS = {
   estimate:              'Surgery Estimate',
 }
 
-// Placeholder ML assessment — replaced by real model output when integrated
-function getMLAssessment(score, procedureCode, claimedAmount) {
-  if (!score || score === 0) return null
+// Severity band for the ensemble score. This card deliberately does NOT assert
+// *why* a claim scored what it did: it only receives the final number, not the
+// component scores, so any specific claim it made here would be guesswork. It
+// previously stated things like "inflated billing detected" for every score
+// above 75 — which was wrong whenever the score came from the doctor-credential
+// floor rather than from billing. The real, per-signal reasons come from the
+// oracle's XAI record and are rendered by <XaiPanel /> directly above this.
+function getMLAssessment(score) {
+  if (score === null || score === undefined) return null
 
   if (score >= 75) return {
     level: 'high',
     label: 'High Risk',
     color: 'red',
     summary:
-      `The model assigned a score of ${score}/100, exceeding the fraud threshold of 75. ` +
-      `Patterns consistent with inflated billing or misrepresented procedures were detected. ` +
-      `The claim has been auto-flagged and requires careful manual review before any approval.`,
+      `The ensemble scored this claim ${score}/100, at or above the automated fraud threshold of 75. ` +
+      `The claim is auto-flagged and needs manual review before any approval. ` +
+      `See the AI Explanation panel above for which signals drove the score.`,
     flags: [
-      'Score exceeds the automated fraud threshold (75)',
-      'Billing pattern significantly deviates from historical norms for this procedure',
+      'At or above the automated fraud threshold (75)',
       'Auto-flagged by the adjudication engine — manual override required',
     ],
   }
@@ -54,15 +59,9 @@ function getMLAssessment(score, procedureCode, claimedAmount) {
     label: 'Moderate Risk',
     color: 'amber',
     summary:
-      `The model assigned a score of ${score}/100, indicating moderate risk. ` +
-      `Some anomalies were detected — the claimed amount may be above the median for this procedure code, ` +
-      `or the patient has prior claims for similar procedures within a short window. ` +
-      `Manual review of attached documents is recommended before approval.`,
-    flags: [
-      'Claimed amount above median for this procedure category',
-      'Minor billing pattern deviation detected',
-      'Document review recommended prior to decision',
-    ],
+      `The ensemble scored this claim ${score}/100 — below the auto-flag threshold of 75, but high enough to warrant a closer look. ` +
+      `See the AI Explanation panel above for the per-signal breakdown.`,
+    flags: ['Below the auto-flag threshold, but elevated — document review recommended'],
   }
 
   if (score >= 25) return {
@@ -70,12 +69,9 @@ function getMLAssessment(score, procedureCode, claimedAmount) {
     label: 'Low-Moderate Risk',
     color: 'yellow',
     summary:
-      `The model assigned a score of ${score}/100, indicating minor risk factors. ` +
-      `Claim parameters are mostly within normal bounds. ` +
-      `A few weak indicators were noted but the overall likelihood of fraud is low.`,
-    flags: [
-      'Minor anomalies noted — no strong fraud indicators',
-    ],
+      `The ensemble scored this claim ${score}/100. No signal was strong enough to flag it. ` +
+      `See the AI Explanation panel above for the per-signal breakdown.`,
+    flags: [],
   }
 
   return {
@@ -83,9 +79,8 @@ function getMLAssessment(score, procedureCode, claimedAmount) {
     label: 'Low Risk',
     color: 'green',
     summary:
-      `The model assigned a score of ${score}/100, indicating low fraud risk. ` +
-      `The procedure code, claimed amount, and patient profile are all within expected bounds for this type of claim. ` +
-      `No significant anomalies were detected.`,
+      `The ensemble scored this claim ${score}/100, well below the fraud threshold. ` +
+      `See the AI Explanation panel above for the per-signal breakdown.`,
     flags: [],
   }
 }
@@ -181,7 +176,7 @@ export default function ClaimDetail() {
   const canTx6 = hasRole('admin', 'reviewer')
   const canTx7 = hasRole('admin', 'finance')
 
-  const mlAssessment = getMLAssessment(claim.fraudScore, claim.procedureCode, claim.claimedAmount)
+  const mlAssessment = getMLAssessment(claim.fraudScore)
 
   return (
     <div>
@@ -291,7 +286,7 @@ export default function ClaimDetail() {
               <h2 className="font-semibold text-gray-900">ML Fraud Assessment</h2>
             </div>
             <span className="badge bg-purple-100 text-purple-600 text-xs">
-              {xaiCid ? 'Powered by EfficientNet-B3 + XGBoost' : 'Placeholder — oracle pending'}
+              {xaiCid ? 'Severity band — see AI Explanation above for reasons' : 'Placeholder — oracle pending'}
             </span>
           </div>
 

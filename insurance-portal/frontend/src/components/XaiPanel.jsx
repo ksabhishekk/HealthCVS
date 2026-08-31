@@ -174,6 +174,8 @@ export default function XaiPanel({ xaiCid, claimId }) {
           Formula: (Tabular × {weights?.tabular}) + (CV × {weights?.cv}) + (NLP × {weights?.nlp})
           {!doctorVerified && ' · Doctor unverified → floor applied at 75'}
           {doctorVerified && domainMatch === false && ' · Doctor domain mismatch → floor applied at 60'}
+          {doctorVerified && components.doctorNameMatch === false && ' · Doctor name mismatch → floor applied at 60'}
+          {components.procedureMatch === false && ' · Procedure/diagnosis mismatch → floor applied at 60'}
         </p>
       </div>
 
@@ -213,7 +215,7 @@ export default function XaiPanel({ xaiCid, claimId }) {
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <Microscope className="w-3.5 h-3.5 text-purple-500" />
-              <span className="text-xs font-medium text-gray-600">NLP Consistency (ICD-10 + TF-IDF) — 20% weight</span>
+              <span className="text-xs font-medium text-gray-600">NLP Consistency (ICD-10 + biomedical embeddings) — 20% weight</span>
             </div>
             <ScoreBar label="" value={nlpScore ?? 0} color={nlpScore === 0 ? 'green' : 'red'} />
           </div>
@@ -230,6 +232,18 @@ export default function XaiPanel({ xaiCid, claimId }) {
           <span className="text-xs text-gray-500">Doctor NMC:</span>
           <Badge ok={doctorVerified} trueLabel={`Verified: ${doctorName || 'Yes'}`} falseLabel={`Verification Failed: ${doctorName || 'Registry lookup failed'}`} />
         </div>
+        {components.procedureMatch === false && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Procedure:</span>
+            <Badge ok={false} trueLabel="" falseLabel="Does not match the diagnosis" />
+          </div>
+        )}
+        {components.doctorNameMatch === false && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Doctor Identity:</span>
+            <Badge ok={false} trueLabel="" falseLabel="Name does not match the registration number" />
+          </div>
+        )}
         {domainMatch !== null && domainMatch !== undefined && (
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">Doctor Domain:</span>
@@ -241,6 +255,20 @@ export default function XaiPanel({ xaiCid, claimId }) {
           </div>
         )}
       </div>
+
+      {components.procedureMatch === false && components.procedureReason && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Procedure / Diagnosis Check</p>
+          <p className="text-xs text-amber-800">{components.procedureReason}</p>
+        </div>
+      )}
+
+      {components.doctorNameMatch === false && components.doctorNameReason && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+          <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1">Doctor Identity Check</p>
+          <p className="text-xs text-red-800">{components.doctorNameReason}</p>
+        </div>
+      )}
 
       {/* NLP reason */}
       {nlpReason && (
