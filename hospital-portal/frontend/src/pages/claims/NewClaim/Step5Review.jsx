@@ -45,7 +45,7 @@ function Row({ label, value }) {
 // to their own on-file contact number, verified before submission is allowed,
 // adds the patient as a fourth attesting party alongside clerk/doctor/insurer —
 // enforced off-chain (in the /claims/submit route) to avoid a contract redeploy.
-function PatientConsent({ contactNumber, patientName, procedureSummary, consent, update }) {
+function PatientConsent({ contactNumber, aadhaarNumber, policyId, insuranceCompany, patientName, procedureSummary, consent, update }) {
   const [sending, setSending] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [sent, setSent] = useState(false)
@@ -53,15 +53,25 @@ function PatientConsent({ contactNumber, patientName, procedureSummary, consent,
   const [devOtp, setDevOtp] = useState(null)
   const [sendMessage, setSendMessage] = useState('')
   const [consentError, setConsentError] = useState('')
+  const [consentId, setConsentId] = useState(null)
+  // The OTP goes to the number the insurer holds, which may differ from the
+  // one typed on the claim form — so display whatever the server actually used.
+  const [sentTo, setSentTo] = useState(null)
+  const [numberSource, setNumberSource] = useState(null)
 
   const handleSend = async () => {
     setSending(true)
     setConsentError('')
     setDevOtp(null)
     try {
-      const { data: res } = await sendConsentOtp({ contactNumber, patientName, procedureSummary })
+      const { data: res } = await sendConsentOtp({
+        contactNumber, aadhaarNumber, policyId, insuranceCompany, patientName, procedureSummary,
+      })
       setSent(true)
       setSendMessage(res.message || '')
+      setConsentId(res.consentId || null)
+      setSentTo(res.maskedNumber || null)
+      setNumberSource(res.numberSource || null)
       if (res.devOtp) setDevOtp(res.devOtp)  // present whenever a real SMS wasn't actually delivered
     } catch (err) {
       setConsentError(err.response?.data?.error || 'Failed to send OTP')
@@ -75,8 +85,8 @@ function PatientConsent({ contactNumber, patientName, procedureSummary, consent,
     setVerifying(true)
     setConsentError('')
     try {
-      const { data: res } = await verifyConsentOtp({ contactNumber, otp: otpValue })
-      update({ consent: { verified: true, token: res.consentToken, contactNumber } })
+      const { data: res } = await verifyConsentOtp({ consentId, contactNumber, otp: otpValue })
+      update({ consent: { verified: true, token: res.consentToken, contactNumber, sentTo, numberSource } })
     } catch (err) {
       setConsentError(err.response?.data?.error || 'Verification failed')
     } finally {
@@ -88,7 +98,10 @@ function PatientConsent({ contactNumber, patientName, procedureSummary, consent,
     return (
       <div className="card p-5 border-green-200 bg-green-50">
         <div className="flex items-center gap-2 text-green-700 font-medium text-sm">
-          <ShieldCheck className="w-4 h-4" /> Patient consent verified — xxxxxx{contactNumber.slice(-4)}
+          <ShieldCheck className="w-4 h-4" /> Patient consent verified — {consent.sentTo || `xxxxxx${contactNumber.slice(-4)}`}
+          {consent.numberSource === 'insurer' && (
+            <span className="text-xs font-normal text-green-600">(number verified against insurer records)</span>
+          )}
         </div>
       </div>
     )
@@ -100,7 +113,13 @@ function PatientConsent({ contactNumber, patientName, procedureSummary, consent,
         <PhoneCall className="w-4 h-4 text-gray-500" /> Patient Consent Required
       </h3>
       <p className="text-xs text-gray-500 mb-4">
-        Confirm with the patient that they authorize this claim before it's submitted. An OTP will be sent to their contact number (xxxxxx{contactNumber?.slice(-4) || '----'}).
+        Confirm with the patient that they authorize this claim before it's submitted. The OTP goes to the number the insurer holds for this patient, not the one entered on this form.
+        {sentTo && (
+          <> Sent to <span className="font-medium">{sentTo}</span>
+          {numberSource === 'insurer'
+            ? ' — verified against insurer enrolment records.'
+            : ' — insurer has no number on record for this patient, so the number entered on this form was used.'}</>
+        )}
       </p>
 
       {!sent ? (
@@ -260,6 +279,9 @@ export default function Step5Review({ data, update, onBack, onSubmit, submitting
 
       <PatientConsent
         contactNumber={admission?.contactNumber}
+        aadhaarNumber={data.patient?.aadhaarNumber}
+        policyId={data.insurance?.policyNumber}
+        insuranceCompany={data.insurance?.company}
         patientName={patient?.name}
         procedureSummary={primaryProcedure?.name}
         consent={data.consent}

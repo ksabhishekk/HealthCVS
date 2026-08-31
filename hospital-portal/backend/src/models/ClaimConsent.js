@@ -19,6 +19,7 @@ const mongoose = require('mongoose')
 const ClaimConsentSchema = new mongoose.Schema(
   {
     contactNumber: { type: String, required: true, index: true },
+    aadhaarHash:   { type: String, default: null, index: true },  // what the consent is actually bound to
     otp:           { type: String, required: true },  // plaintext, 6 digits, short-lived — not a login credential
     expiresAt:     { type: Date, required: true },
     verified:      { type: Boolean, default: false },

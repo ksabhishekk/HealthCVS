@@ -17,12 +17,13 @@ router.post('/register',
   body('policyType').isIn(['individual', 'family_floater', 'corporate', 'government']).withMessage('Invalid policy type'),
   body('coverageAmount').isFloat({ min: 1 }).withMessage('Coverage amount must be a positive number'),
   body('expiryDate').isISO8601().withMessage('Expiry date must be a valid date'),
+  body('contactNumber').optional({ checkFalsy: true }).matches(/^\d{10}$/).withMessage('Contact number must be 10 digits'),
   body('walletAddress').optional({ checkFalsy: true }).isEthereumAddress().withMessage('Wallet must be a valid Ethereum address'),
   async (req, res) => {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() })
 
-    const { aadhaarNumber, policyId, insuranceCompany, policyType, coverageAmount, expiryDate, walletAddress, notes } = req.body
+    const { aadhaarNumber, policyId, insuranceCompany, policyType, coverageAmount, expiryDate, walletAddress, contactNumber, notes } = req.body
     try {
       const aadhaarHash = ethers.keccak256(ethers.toUtf8Bytes(aadhaarNumber))
 
@@ -54,6 +55,7 @@ router.post('/register',
         coverageAmount: Number(coverageAmount),
         expiryDate: new Date(expiryDate),
         isPolicyActive: true,
+        contactNumber: contactNumber || null,
         walletAddress: walletAddress || null,
         enrolledBy: req.user._id,
         txHash,

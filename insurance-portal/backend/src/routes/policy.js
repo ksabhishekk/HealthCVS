@@ -39,6 +39,10 @@ router.post('/verify', requireApiKey, async (req, res) => {
       coverageAmount: record.coverageAmount,
       expiryDate: record.expiryDate,
       insuranceCompany: record.insuranceCompany,
+      // Returned so the hospital can send the consent OTP to the number the
+      // insurer holds rather than the one a clerk typed. Knowing the number
+      // does not let a clerk receive the SMS, so this is safe to share.
+      contactNumber: record.contactNumber || null,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })

@@ -25,6 +25,7 @@ export default function PatientEnrollment() {
   const [form, setForm] = useState({
     aadhaarNumber: '',
     policyId: '',
+    contactNumber: '',
     insuranceCompany: '',
     policyType: '',
     coverageAmount: '',
@@ -65,7 +66,7 @@ export default function PatientEnrollment() {
     try {
       const { data } = await registerPatient(form)
       setTxHash(data.txHash)
-      setForm({ aadhaarNumber: '', policyId: '', insuranceCompany: '', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '' })
+      setForm({ aadhaarNumber: '', policyId: '', contactNumber: '', insuranceCompany: '', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '' })
     } catch (err) {
       const data = err.response?.data
       setEnrollError(data?.error || data?.errors?.[0]?.msg || err.message || 'Enrollment failed')
@@ -225,6 +226,19 @@ export default function PatientEnrollment() {
 
           {/* Optional */}
           <div className="grid grid-cols-1 gap-4 pt-3 border-t">
+            <div>
+              <label className="label">Patient Contact Number <span className="text-gray-400">(10 digits)</span></label>
+              <input type="tel" className="input"
+                placeholder="Used to send claim-consent OTPs"
+                value={form.contactNumber}
+                onChange={e => setField('contactNumber', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                disabled={!canEnroll}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Claim-consent OTPs are sent here rather than to the number a hospital enters, so a
+                hospital cannot approve a claim on the patient's behalf.
+              </p>
+            </div>
             <div>
               <label className="label">Patient Wallet Address <span className="text-gray-400">(optional)</span></label>
               <input type="text" className="input font-mono"
