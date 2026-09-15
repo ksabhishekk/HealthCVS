@@ -12,3 +12,4 @@ shap
 pandas
 python-dotenv
 sentence-transformers
+requests

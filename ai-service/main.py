@@ -31,6 +31,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from explain_tabular import get_fraud_score, explain_prediction, get_hybrid_fraud_score
 from nlp_helper import verify_prescription_consistency, verify_doctor_credentials, verify_doctor_domain
+from genai_helper import analyze_image_with_genai
 from PIL import Image
 
 try:
@@ -152,7 +153,7 @@ async def analyze_document(file: UploadFile = File(...)):
         except Exception as ocr_err:
             ocr_text = f"[OCR failed: {ocr_err}]"
 
-        # 3. Preprocessing & 4. Inference
+        # 3. Preprocessing & 4. Inference (trained model)
         heatmap_path = None
         if TF_AVAILABLE and model is not None:
             image = Image.open(temp_path).convert("RGB").resize((300, 300))
@@ -160,10 +161,10 @@ async def analyze_document(file: UploadFile = File(...)):
                 np.expand_dims(np.array(image, dtype=np.float32), axis=0)
             )
             preds = model.predict(img_array, verbose=0)[0]
-            tamper_prob = float(preds[1])  # index 1 = tampered class
+            trained_model_prob = float(preds[1])  # index 1 = tampered class
             
-            # 5. Grad-CAM heatmap
-            if tamper_prob > 0.50:
+            # 5. Grad-CAM heatmap (always based on the trained model's own output)
+            if trained_model_prob > 0.50:
                 try:
                     heatmap = make_gradcam_heatmap(img_array, model)
                     heatmap_filename = f"heatmap_{uuid.uuid4().hex[:8]}_{file.filename}"
@@ -173,14 +174,36 @@ async def analyze_document(file: UploadFile = File(...)):
                     heatmap_path = None
         else:
             # Mock response if TF is not available
-            tamper_prob = 0.75
+            trained_model_prob = 0.75
             heatmap_path = None
 
+        # 6. GenAI independent tamper estimate
+        genai_result = analyze_image_with_genai(temp_path)
+
+        if genai_result["available"]:
+            final_prob = genai_result["score"]
+            score_source = "genai"
+        else:
+            final_prob = trained_model_prob
+            score_source = "model_fallback"
+
+        print(
+            f"[INFO] Trained model: {trained_model_prob:.3f}, "
+            f"GenAI: {genai_result['score']}, "
+            f"Final: {final_prob:.3f} (source: {score_source})"
+        )
+
         return {
-            "tamper_probability": round(tamper_prob * 100, 1),
-            "is_suspicious": tamper_prob > 0.50,
+            "tamper_probability": round(final_prob * 100, 1),
+            "is_suspicious": final_prob > 0.50,
             "ocr_text": ocr_text,
             "heatmap_file": heatmap_path,
+            "_debug": {
+                "trained_model_score": round(trained_model_prob * 100, 1),
+                "genai_score": round(genai_result["score"] * 100, 1) if genai_result["score"] is not None else None,
+                "genai_reasoning": genai_result["reasoning"],
+                "score_source": score_source,
+            },
         }
 
     finally:
