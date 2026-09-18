@@ -2,6 +2,7 @@ const dns = require('node:dns')
 dns.setServers(['8.8.8.8', '1.1.1.1'])
 
 require('dotenv').config()
+require('./config/jwtGuard')('Insurer portal')
 const express = require('express')
 const cors = require('cors')
 const { connectDB } = require('./config/db')
@@ -20,6 +21,7 @@ app.use('/api/claims', require('./routes/claims'))
 app.use('/api/patients', require('./routes/patients'))
 app.use('/api/staff', require('./routes/staff'))
 app.use('/api/policy', require('./routes/policy'))
+app.use('/api/hospitals', require('./routes/hospitals'))
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 

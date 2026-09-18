@@ -4,6 +4,7 @@ import {
   ExternalLink, AlertTriangle, Loader2, BarChart2, FileSearch,
   UserCheck, UserX, Microscope,
 } from 'lucide-react'
+import { getClaimXai } from '../api/claims'
 
 const GATEWAY = import.meta.env.VITE_PINATA_GATEWAY || 'gateway.pinata.cloud'
 const ipfsUrl  = (cid) => cid ? `https://${GATEWAY}/ipfs/${cid}` : null
@@ -52,29 +53,57 @@ export default function XaiPanel({ xaiCid, claimId }) {
   const [data, setData]     = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState(null)
+  const [oracleError, setOracleError] = useState(null)
+
+  // Poll the oracle's own status even when there is no XAI record yet: a failed
+  // run leaves the claim at "Doc Authenticated" with nothing on screen, which
+  // looks identical to the oracle simply not having started.
+  useEffect(() => {
+    if (xaiCid || !claimId) return
+    getClaimXai(claimId)
+      .then(({ data: res }) => setOracleError(res?.xai?.oracleError || null))
+      .catch(() => {})
+  }, [xaiCid, claimId])
 
   useEffect(() => {
     if (!xaiCid) return
     setLoading(true)
     setError(null)
 
-    fetch(ipfsUrl(xaiCid))
-      .then((r) => {
-        if (!r.ok) throw new Error(`IPFS fetch failed: ${r.status}`)
-        return r.json()
+    // Ask our own backend first — it has the dedicated Pinata gateway and no
+    // CORS restrictions. Only fall back to hitting the gateway from the browser
+    // if the backend couldn't retrieve it either.
+    getClaimXai(claimId)
+      .then(({ data: res }) => {
+        if (res?.xai?.xaiData) return res.xai.xaiData
+        return fetch(ipfsUrl(xaiCid)).then((r) => {
+          if (!r.ok) throw new Error(`IPFS fetch failed: ${r.status}`)
+          return r.json()
+        })
       })
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [xaiCid])
+  }, [xaiCid, claimId])
 
   // ── States ──────────────────────────────────────────────────────────────────
   if (!xaiCid) return (
-    <div className="card p-5 mb-5 border border-dashed border-gray-200">
-      <div className="flex items-center gap-2 text-gray-400">
-        <Brain className="w-4 h-4" />
-        <span className="text-sm">AI explanation not yet available. Oracle fires after doctor authentication (TX3).</span>
-      </div>
+    <div className={`card p-5 mb-5 border ${oracleError ? 'border-red-200 bg-red-50' : 'border-dashed border-gray-200'}`}>
+      {oracleError ? (
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-red-700">AI oracle failed for this claim</p>
+            <p className="text-xs text-red-800 mt-1 font-mono break-all">{oracleError}</p>
+            <p className="text-xs text-red-700 mt-1">Fix the underlying issue, then press Run AI Oracle again.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2 text-gray-400">
+          <Brain className="w-4 h-4" />
+          <span className="text-sm">AI explanation not yet available. Oracle fires after doctor authentication (TX3).</span>
+        </div>
+      )}
     </div>
   )
 
@@ -172,10 +201,26 @@ export default function XaiPanel({ xaiCid, claimId }) {
         </div>
         <p className="text-xs text-gray-500 mt-2">
           Formula: (Tabular × {weights?.tabular}) + (CV × {weights?.cv}) + (NLP × {weights?.nlp})
+          {components.findings ? (() => {
+            const all = components.findings
+            const confirmedCount = all.filter(f => f.kind === 'confirmed').length
+            const topFloor = all.reduce((m, f) => Math.max(m, f.floor || 0), 0)
+            return (
+              <>
+                {topFloor > 0 && ` · Strongest finding sets a floor of ${topFloor}`}
+                {components.escalation > 0 && ` · +${components.escalation} because ${confirmedCount} independent findings agree`}
+              </>
+            )
+          })() : (
+            <>
           {!doctorVerified && ' · Doctor unverified → floor applied at 75'}
           {doctorVerified && domainMatch === false && ' · Doctor domain mismatch → floor applied at 60'}
           {doctorVerified && components.doctorNameMatch === false && ' · Doctor name mismatch → floor applied at 60'}
           {components.procedureMatch === false && ' · Procedure/diagnosis mismatch → floor applied at 60'}
+          {components.billIsMedical === false && ' · Not a medical bill → floor applied at 75'}
+          {components.billOverclaimRatio && ` · Claim exceeds billed total by ${components.billOverclaimRatio.toFixed(1)}x → floor applied at 75`}
+            </>
+          )}
         </p>
       </div>
 
@@ -222,6 +267,157 @@ export default function XaiPanel({ xaiCid, claimId }) {
         </div>
       </div>
 
+      {/* Reviewer summary — findings ranked by severity, each with what to do.
+          The badges below stay as the per-check detail; this block exists because
+          a flat row of equal-weight red badges gave a reviewer no way to tell a
+          fake doctor identity apart from an unreadable scan. */}
+      {(() => {
+        const c = components || {}
+        // Ordered most to least severe. `action` is what the reviewer should
+        // actually do — the panel used to diagnose and then stop.
+        const hasFinding = (key) => (c.findings || []).find(f => f.key === key)
+        const confirmed = [
+          c.hospitalIdentity?.match === false && {
+            t: c.hospitalIdentity.reason,
+            a: 'Do not settle. Confirm directly with the hospital that it submitted this claim, and check its empanelment.',
+          },
+          hasFinding('kyc_aadhaar_mismatch') && {
+            t: hasFinding('kyc_aadhaar_mismatch').label,
+            a: 'Treat as possible identity substitution — verify the patient before proceeding.',
+          },
+          c.doctorVerified === false && {
+            t: 'Doctor could not be verified in the NMC registry',
+            a: 'Ask the hospital for the treating doctor’s registration certificate before proceeding.',
+          },
+          c.doctorNameMatch === false && {
+            t: c.doctorNameReason,
+            a: 'The registration number belongs to a different doctor. Confirm who actually treated this patient.',
+          },
+          c.billIsMedical === false && {
+            t: c.billTypeReason,
+            a: 'Reject the submitted document and request an itemised hospital bill.',
+          },
+          c.billOverclaimRatio && {
+            t: `Claim exceeds the billed total by ${c.billOverclaimRatio.toFixed(1)}x`,
+            a: 'Settle no more than the billed amount, or request a corrected bill.',
+          },
+          ...(c.billDiscrepancies || []).map(d => ({ t: d, a: 'Reconcile with the hospital before settling.' })),
+          c.procedureMatch === false && {
+            t: c.procedureReason,
+            a: 'Possible upcoding — confirm which procedure was actually performed.',
+          },
+          c.domainMatch === false && {
+            t: c.domainReason,
+            a: 'Confirm the treating doctor’s specialty. Note the department is supplied by the hospital, not the NMC registry.',
+          },
+          (c.duplicateDocuments || []).length > 0 && {
+            t: `The same file was submitted for ${c.duplicateDocuments[0].count} document slots (${c.duplicateDocuments[0].slots.join(', ')})`,
+            a: 'Request the individual supporting documents.',
+          },
+          hasFinding('document_slot_mismatch') && {
+            t: hasFinding('document_slot_mismatch').label,
+            a: 'Request the correct document for each slot.',
+          },
+          hasFinding('kyc_pan_mismatch') && {
+            t: hasFinding('kyc_pan_mismatch').label,
+            a: 'Confirm the patient’s identity documents.',
+          },
+          c.contactReuse?.match === false && {
+            t: c.contactReuse.reason,
+            a: 'Contact the policyholder through an independent channel before approving — this pattern indicates fabricated patients.',
+          },
+          c.doctorTrackRecord?.concerning && {
+            t: c.doctorTrackRecord.reason,
+            a: 'Review this doctor’s other recent claims together.',
+          },
+        ].filter(Boolean)
+
+        const unverified = [
+          ...(c.billUnchecked || []).map(u => ({ t: u, a: 'Request a legible bill — do not approve on an unverified amount.' })),
+          ...(c.findings || [])
+            .filter(f => f.kind === 'unverified' && f.key !== 'bill_unverified')
+            .map(f => ({
+              t: f.label,
+              a: f.key.startsWith('hospital_') ? 'Add this hospital to the empanelment registry, or confirm its identity directly.'
+                : f.key.startsWith('kyc_') ? 'Request a legible copy of the patient’s identity document.'
+                : f.key.startsWith('card_') ? 'Request an insurance card that shows the policy number.'
+                : f.key.startsWith('diagnosis_absent') ? 'Check that the clinical papers support the claimed diagnosis.'
+                : f.key === 'bill_not_analysed' ? 'Request a legible bill — do not approve on an unverified amount.'
+                : 'Request a legible copy of this document.',
+            })),
+        ]
+
+        if (!confirmed.length && !unverified.length) return null
+        return (
+          <div className="space-y-2 pt-1">
+            {confirmed.length > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+                <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1.5">
+                  Findings ({confirmed.length}) — checked and contradicted
+                </p>
+                <ol className="space-y-1.5">
+                  {confirmed.map((f, i) => (
+                    <li key={i} className="text-xs text-red-900">
+                      <span className="font-semibold">{i + 1}. {f.t}</span>
+                      <span className="block text-red-700 mt-0.5">→ {f.a}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {unverified.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1.5">
+                  Could not verify ({unverified.length}) — not evidence of wrongdoing
+                </p>
+                <ol className="space-y-1.5">
+                  {unverified.map((f, i) => (
+                    <li key={i} className="text-xs text-amber-900">
+                      <span className="font-semibold">{i + 1}. {f.t}</span>
+                      <span className="block text-amber-700 mt-0.5">→ {f.a}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {typeof c.billedTotal === 'number' && (
+              <p className="text-xs text-gray-500">
+                Bill total read from the document: <span className="font-semibold text-gray-700">₹{c.billedTotal.toLocaleString('en-IN')}</span>
+                {c.billedTotalLabel ? ` (from "${c.billedTotalLabel}")` : ''}
+              </p>
+            )}
+          </div>
+        )
+      })()}
+
+      {components?.supportingDocuments?.length > 0 && (
+        <div className="rounded-lg border border-gray-200 px-3 py-2">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Supporting documents checked</p>
+          <ul className="space-y-1">
+            {components.supportingDocuments.map((d, i) => (
+              <li key={i} className="text-xs text-gray-700 flex items-start gap-1.5">
+                <span className={`font-bold ${d.slotMatch === false ? 'text-red-600' : d.checked ? 'text-emerald-600' : 'text-gray-400'}`}>
+                  {d.slotMatch === false ? '✗' : d.checked ? '✓' : '–'}
+                </span>
+                <span>
+                  <span className="font-medium">{d.label}</span> — {d.reason}
+                  {d.aadhaarOnDocument && ` · Aadhaar on document: ${d.aadhaarOnDocument}`}
+                  {d.panOnDocument && ` · PAN: ${d.panOnDocument}`}
+                  {d.policyNumberOnCard && ` · policy number: ${d.policyNumberOnCard}`}
+                  {d.diagnosisMentioned === true && ' · mentions the diagnosis'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {components?.hospitalIdentity?.match === true && (
+        <p className="text-xs text-emerald-700">✓ Hospital identity: {components.hospitalIdentity.reason}</p>
+      )}
+      {components?.contactReuse?.match === true && (
+        <p className="text-xs text-emerald-700">✓ Consent contact: {components.contactReuse.reason}</p>
+      )}
+
       {/* NLP + Doctor badges */}
       <div className="flex flex-wrap gap-3 pt-1 border-t border-gray-100">
         <div className="flex items-center gap-2">
@@ -232,6 +428,18 @@ export default function XaiPanel({ xaiCid, claimId }) {
           <span className="text-xs text-gray-500">Doctor NMC:</span>
           <Badge ok={doctorVerified} trueLabel={`Verified: ${doctorName || 'Yes'}`} falseLabel={`Verification Failed: ${doctorName || 'Registry lookup failed'}`} />
         </div>
+        {components.billIsMedical === false && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Bill Type:</span>
+            <Badge ok={false} trueLabel="" falseLabel="Not a medical bill" />
+          </div>
+        )}
+        {components.billDiscrepancies?.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Bill vs Claim:</span>
+            <Badge ok={false} trueLabel="" falseLabel={`${components.billDiscrepancies.length} discrepancy(ies)`} />
+          </div>
+        )}
         {components.procedureMatch === false && (
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-500">Procedure:</span>
@@ -255,6 +463,18 @@ export default function XaiPanel({ xaiCid, claimId }) {
           </div>
         )}
       </div>
+
+      {(components.billDiscrepancies?.length > 0 || components.billIsMedical === false) && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+          <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-1">Bill Reconciliation</p>
+          {components.billIsMedical === false && (
+            <p className="text-xs text-red-800 mb-1">{components.billTypeReason}</p>
+          )}
+          {components.billDiscrepancies?.map((d, i) => (
+            <p key={i} className="text-xs text-red-800">- {d}</p>
+          ))}
+        </div>
+      )}
 
       {components.procedureMatch === false && components.procedureReason && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
@@ -288,8 +508,14 @@ export default function XaiPanel({ xaiCid, claimId }) {
 
       {/* SHAP explanations */}
       {shapExplanations && shapExplanations.length > 0 && (
-        <div>
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2.5">SHAP Explanations (top drivers)</p>
+        <details className="group">
+          <summary className="cursor-pointer text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2.5 select-none">
+            SHAP Explanations (top drivers) — click to expand
+          </summary>
+          <p className="text-xs text-gray-500 mb-2.5 italic">
+            Read these with care. The tabular model is trained on synthetic data, so attributions for
+            features that do not drive the synthetic label are not reliable evidence about this claim.
+          </p>
           <div className="space-y-2">
             {shapExplanations.map((s, i) => (
               <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-lg px-3 py-2 text-xs text-gray-700">
@@ -298,7 +524,7 @@ export default function XaiPanel({ xaiCid, claimId }) {
               </div>
             ))}
           </div>
-        </div>
+        </details>
       )}
 
       {/* Grad-CAM image */}

@@ -6,6 +6,7 @@ const {
   insurerReviewOnBlockchain,
   settleClaimOnBlockchain,
   getContracts,
+  getSettlement,
 } = require('../services/blockchain')
 
 const router = express.Router()
@@ -29,7 +30,66 @@ router.get('/:id/review-notes', requireHospitalApiKey, async (req, res) => {
   }
 })
 
+// Inter-portal: information requests on a claim, read by the hospital portal
+router.get('/:id/info-requests', requireHospitalApiKey, async (req, res) => {
+  try {
+    const Claim = require('../models/Claim')
+    const claim = await Claim.findOne({ blockchainClaimId: Number(req.params.id) }).select('infoRequests').lean()
+    res.json({ infoRequests: claim?.infoRequests || [] })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Inter-portal: the hospital answers an information request
+router.post('/:id/info-requests/:requestId/response', requireHospitalApiKey, async (req, res) => {
+  try {
+    const response = String(req.body.response || '').trim()
+    if (!response) return res.status(400).json({ error: 'A response is required' })
+    const Claim = require('../models/Claim')
+    const claim = await Claim.findOne({ blockchainClaimId: Number(req.params.id) })
+    const request = claim?.infoRequests.id(req.params.requestId)
+    if (!request) return res.status(404).json({ error: 'Information request not found' })
+    if (request.status !== 'open') return res.status(409).json({ error: 'This request has already been answered' })
+
+    request.response = response
+    request.responseDocuments = (Array.isArray(req.body.documents) ? req.body.documents : [])
+      .filter(d => d?.cid)
+      .map(d => ({ name: d.name || d.fileName || 'document', cid: d.cid, type: d.type || '' }))
+    request.respondedByName = req.body.respondedByName || 'Hospital'
+    request.respondedAt = new Date()
+    request.status = 'responded'
+    await claim.save()
+    res.json({ success: true, request })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.use(authenticate)
+
+// Line items for TX5, taken from the claim's IPFS metadata. The contract needs
+// them to sum exactly to the on-chain total and to include the on-chain primary
+// code. The hospital rounded the *sum* when writing the total, so lines are
+// rounded individually and any remainder is folded into the primary line.
+// Without usable metadata the claim is treated as one line, which reproduces the
+// old primary-only check instead of failing adjudication outright.
+const buildItemisation = (onChain, metadata) => {
+  const total = Number(onChain.claimedAmount)
+  const primary = onChain.procedureCode
+  const procs = (metadata?.medical?.procedures || [])
+    .filter(p => p?.code && Number(p.claimedAmount) > 0)
+    .map(p => ({ code: String(p.code), amount: Math.round(Number(p.claimedAmount)) }))
+  if (!procs.length || !procs.some(p => p.code === primary)) return [{ code: primary, amount: total }]
+
+  const sum = procs.reduce((acc, p) => acc + p.amount, 0)
+  if (sum !== total) {
+    const line = procs.find(p => p.code === primary)
+    line.amount += total - sum
+    if (line.amount <= 0) return [{ code: primary, amount: total }]
+  }
+  return procs
+}
 
 const fetchClaimMetadata = async (cid) => {
   if (!cid) return null
@@ -73,11 +133,17 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
     base.hospitalName = metadata.hospital?.name || null
   }
 
+  if (includeMetadata) {
+    base.settlement = await getSettlement(id)
+  }
+
   try {
     const Claim = require('../models/Claim')
     const dbClaim = await Claim.findOne({ blockchainClaimId: id }).lean()
     if (dbClaim) {
       base.reviewNotes = dbClaim.reviewNotes || null
+      base.infoRequests = dbClaim.infoRequests || []
+      base.reviewDecision = dbClaim.reviewDecision?.decidedAt ? dbClaim.reviewDecision : null
     }
   } catch (err) {
     console.warn(`[Insurance] Could not attach reviewNotes: ${err.message}`)
@@ -154,6 +220,42 @@ router.get('/stats', async (req, res) => {
   }
 })
 
+// GET /api/claims/analytics/signals — how reviewers responded to each check.
+// For every signal the oracle raised on a reviewed claim, count what the human
+// reviewer then did. A signal that fires on claims reviewers approve in full is
+// noise; one that mostly precedes rejection or a reduced settlement is earning
+// its place. Reviewer decisions were previously never compared with the flags.
+router.get('/analytics/signals', async (req, res) => {
+  try {
+    const Claim = require('../models/Claim')
+    const reviewed = await Claim.find({ 'reviewDecision.decidedAt': { $exists: true } })
+      .select('firedSignals reviewDecision').lean()
+
+    const bySignal = {}
+    let cleanReviewed = 0, cleanApproved = 0
+    for (const c of reviewed) {
+      const d = c.reviewDecision
+      const outcome = d.approved === false ? 'rejected' : (d.approvedAmount < d.claimedAmount ? 'partial' : 'approved')
+      const fired = c.firedSignals || []
+      if (!fired.length) {
+        cleanReviewed++
+        if (outcome === 'approved') cleanApproved++
+      }
+      for (const key of fired) {
+        bySignal[key] = bySignal[key] || { signal: key, fired: 0, rejected: 0, partial: 0, approved: 0 }
+        bySignal[key].fired++
+        bySignal[key][outcome]++
+      }
+    }
+    const signals = Object.values(bySignal)
+      .map(x => ({ ...x, agreementRate: x.fired ? (x.rejected + x.partial) / x.fired : 0 }))
+      .sort((a, b) => b.fired - a.fired)
+    res.json({ reviewedClaims: reviewed.length, cleanReviewed, cleanApproved, signals })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/claims/:id — single claim with full IPFS metadata
 router.get('/:id', async (req, res) => {
   try {
@@ -195,7 +297,11 @@ router.post('/:id/adjudicate',
   requireRole('admin'),
   async (req, res) => {
     try {
-      const result = await adjudicateClaimOnBlockchain(Number(req.params.id))
+      const id = Number(req.params.id)
+      const { claimSubmission } = getContracts()
+      const onChain = await claimSubmission.getClaim(id)
+      const metadata = await fetchClaimMetadata(onChain.cidDischarge)
+      const result = await adjudicateClaimOnBlockchain(id, buildItemisation(onChain, metadata))
       res.json({ success: true, ...result })
     } catch (err) {
       res.status(500).json({ error: err.message })
@@ -212,17 +318,58 @@ router.post('/:id/insurer-review',
       if (approve === undefined || approve === null) {
         return res.status(400).json({ error: 'approve (true/false) is required' })
       }
-      const { txHash, approved } = await insurerReviewOnBlockchain(Number(req.params.id), Boolean(approve))
+      const id = Number(req.params.id)
+      const { claimSubmission } = getContracts()
+      const onChain = await claimSubmission.getClaim(id)
+      const claimedAmount = Number(onChain.claimedAmount)
 
-      // Save review notes to insurance DB Claim document
+      // Approving defaults to the full claim; a reviewer can approve less.
+      const approvedAmount = Boolean(approve) ? Math.round(Number(req.body.approvedAmount ?? claimedAmount)) : 0
+      if (Boolean(approve) && (!(approvedAmount > 0) || approvedAmount > claimedAmount)) {
+        return res.status(400).json({ error: `Approved amount must be between ₹1 and the claimed ₹${claimedAmount.toLocaleString('en-IN')}` })
+      }
+
+      const { txHash, approved } = await insurerReviewOnBlockchain(id, Boolean(approve), approvedAmount)
+
+      // Record the notes and the decision itself — the decision is what lets the
+      // oracle's signals be compared with what reviewers actually did.
       const Claim = require('../models/Claim')
       await Claim.findOneAndUpdate(
-        { blockchainClaimId: Number(req.params.id) },
-        { reviewNotes: reviewNotes || '' },
+        { blockchainClaimId: id },
+        {
+          reviewNotes: reviewNotes || '',
+          reviewDecision: {
+            approved, approvedAmount, claimedAmount,
+            decidedBy: req.user._id, decidedByName: req.user.name, decidedAt: new Date(),
+          },
+        },
         { upsert: true }
       )
 
-      res.json({ success: true, txHash, approved, reviewNotes: reviewNotes || '' })
+      res.json({ success: true, txHash, approved, approvedAmount, claimedAmount, reviewNotes: reviewNotes || '' })
+    } catch (err) {
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// POST /api/claims/:id/info-requests — ask the hospital for more information.
+// Previously a reviewer could only approve or reject on what had been submitted.
+router.post('/:id/info-requests',
+  requireRole('admin', 'reviewer'),
+  async (req, res) => {
+    try {
+      const message = String(req.body.message || '').trim()
+      if (!message) return res.status(400).json({ error: 'Describe what the hospital needs to provide' })
+      const requestedDocuments = (Array.isArray(req.body.requestedDocuments) ? req.body.requestedDocuments : [])
+        .map(String).slice(0, 10)
+      const Claim = require('../models/Claim')
+      const claim = await Claim.findOneAndUpdate(
+        { blockchainClaimId: Number(req.params.id) },
+        { $push: { infoRequests: { message, requestedDocuments, requestedByName: req.user.name, requestedAt: new Date(), status: 'open' } } },
+        { upsert: true, new: true }
+      )
+      res.json({ success: true, infoRequests: claim.infoRequests })
     } catch (err) {
       res.status(500).json({ error: err.message })
     }
@@ -234,8 +381,8 @@ router.post('/:id/settle',
   requireRole('admin', 'finance'),
   async (req, res) => {
     try {
-      const { txHash } = await settleClaimOnBlockchain(Number(req.params.id))
-      res.json({ success: true, txHash })
+      const { txHash, amount } = await settleClaimOnBlockchain(Number(req.params.id))
+      res.json({ success: true, txHash, amount })
     } catch (err) {
       res.status(500).json({ error: err.message })
     }
@@ -250,12 +397,36 @@ router.get('/:id/xai', async (req, res) => {
 
     if (!claim) return res.json({ xai: null, message: 'No oracle data found for this claim yet.' })
 
+    // Fetch the pinned explanation server-side. The browser used to hit the
+    // gateway directly, but the frontend has no VITE_PINATA_GATEWAY set and so
+    // fell back to the public gateway.pinata.cloud, which is rate-limited and
+    // frequently blocked outright — the panel just showed "Failed to fetch".
+    // The backend already holds the dedicated gateway, so serving the JSON from
+    // here avoids CORS entirely and keeps the gateway out of the client bundle.
+    let xaiData = null
+    let xaiFetchError = null
+    if (claim.xaiCid) {
+      const gateway = process.env.PINATA_GATEWAY || 'gateway.pinata.cloud'
+      try {
+        const r = await fetch(`https://${gateway}/ipfs/${claim.xaiCid}`, {
+          signal: AbortSignal.timeout(10000),
+        })
+        if (!r.ok) throw new Error(`gateway returned ${r.status}`)
+        xaiData = await r.json()
+      } catch (e) {
+        xaiFetchError = e.message
+        console.warn(`[Claims] Could not fetch XAI ${claim.xaiCid} from IPFS: ${e.message}`)
+      }
+    }
+
     res.json({
       xai: {
         fraudScore:   claim.fraudScore,
         xaiCid:       claim.xaiCid,
         status:       claim.status,
         oracleError:  claim.oracleError,
+        xaiData,
+        xaiFetchError,
       }
     })
   } catch (err) {
@@ -272,10 +443,26 @@ router.post('/:id/oracle-trigger',
       const { processClaimAI } = require('../oracleWorker')
       const claimId = Number(req.params.id)
       res.json({ success: true, message: `Oracle pipeline started for Claim #${claimId}. Check server logs.` })
-      // Run async so the HTTP response returns immediately
-      processClaimAI(claimId).catch(err =>
+      // Run async so the HTTP response returns immediately. The failure path
+      // used to only console.error, so a manual re-run that died left the claim
+      // sitting at "Doc Authenticated" with nothing on screen explaining why —
+      // indistinguishable from the oracle simply not having started yet.
+      processClaimAI(claimId).catch(async (err) => {
+        if (/already being scored/.test(err.message)) {
+          console.log(`[Oracle Manual] Claim #${claimId} is already being scored — ignoring duplicate trigger`)
+          return
+        }
         console.error(`[Oracle Manual] Claim #${claimId} failed: ${err.message}`)
-      )
+        try {
+          const Claim = require('../models/Claim')
+          await Claim.findOneAndUpdate(
+            { blockchainClaimId: claimId },
+            { status: 'oracle_failed', oracleError: err.message },
+          )
+        } catch (saveErr) {
+          console.error(`[Oracle Manual] Could not record failure: ${saveErr.message}`)
+        }
+      })
     } catch (err) {
       res.status(500).json({ error: err.message })
     }

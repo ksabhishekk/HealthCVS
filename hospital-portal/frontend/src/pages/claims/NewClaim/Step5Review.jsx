@@ -54,7 +54,7 @@ function PatientConsent({ contactNumber, aadhaarNumber, policyId, insuranceCompa
   const [sendMessage, setSendMessage] = useState('')
   const [consentError, setConsentError] = useState('')
   const [consentId, setConsentId] = useState(null)
-  // The OTP goes to the number the insurer holds, which may differ from the
+  // The OTP goes to the contact details the insurer holds, which may differ from the
   // one typed on the claim form — so display whatever the server actually used.
   const [sentTo, setSentTo] = useState(null)
   const [numberSource, setNumberSource] = useState(null)
@@ -113,12 +113,12 @@ function PatientConsent({ contactNumber, aadhaarNumber, policyId, insuranceCompa
         <PhoneCall className="w-4 h-4 text-gray-500" /> Patient Consent Required
       </h3>
       <p className="text-xs text-gray-500 mb-4">
-        Confirm with the patient that they authorize this claim before it's submitted. The OTP goes to the number the insurer holds for this patient, not the one entered on this form.
+        Confirm with the patient that they authorize this claim before it's submitted. The code goes to the contact details the insurer holds for this patient — not to anything entered on this form — so a hospital cannot approve a claim on the patient's behalf.
         {sentTo && (
           <> Sent to <span className="font-medium">{sentTo}</span>
           {numberSource === 'insurer'
             ? ' — verified against insurer enrolment records.'
-            : ' — insurer has no number on record for this patient, so the number entered on this form was used.'}</>
+            : ' — insurer holds no contact details for this patient, so the number entered on this form was used.'}</>
         )}
       </p>
 
@@ -279,7 +279,7 @@ export default function Step5Review({ data, update, onBack, onSubmit, submitting
 
       <PatientConsent
         contactNumber={admission?.contactNumber}
-        aadhaarNumber={data.patient?.aadhaarNumber}
+        aadhaarNumber={data.aadhaarNumber || data.patient?.aadhaarNumber}
         policyId={data.insurance?.policyNumber}
         insuranceCompany={data.insurance?.company}
         patientName={patient?.name}

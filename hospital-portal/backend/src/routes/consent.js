@@ -26,6 +26,7 @@ router.post('/send', async (req, res) => {
       : null
 
     let contactNumber = null
+    let email = null
     let numberSource = 'form'
     if (process.env.INSURANCE_PORTAL_URL && aadhaarNumber && policyId && insuranceCompany) {
       try {
@@ -40,6 +41,11 @@ router.post('/send', async (req, res) => {
         if (verifyData?.valid && verifyData.contactNumber) {
           contactNumber = verifyData.contactNumber
           numberSource = 'insurer'
+        }
+        // Same reasoning as the number: the destination must come from the
+        // insurer's record, never from the form the hospital controls.
+        if (verifyData?.valid && verifyData.email) {
+          email = verifyData.email
         }
       } catch (e) {
         console.warn(`[Consent] Could not reach insurer for the on-record number: ${e.message}`)
@@ -63,16 +69,26 @@ router.post('/send', async (req, res) => {
       procedureSummary: procedureSummary || '',
     })
 
-    const result = await sendOtp(contactNumber, otp)
+    const result = await sendOtp(contactNumber, otp, email)
 
     let message
     if (result.sent) {
-      message = `OTP sent to ${contactNumber}`
+      const masked = result.channel === 'email' && email
+        ? email.replace(/^(.)[^@]*/, (_, c) => c + '*****')
+        : contactNumber
+      message = `OTP sent to ${masked}${result.channel === 'email' ? ' by email' : ''}`
     } else if (result.error) {
       // A gateway was configured but the send failed (e.g. an unverified
       // number on a Twilio trial account) — say so explicitly rather than
       // silently looking identical to "no gateway configured at all."
-      message = `SMS send failed (${result.error}) — falling back to on-screen OTP`
+      // Raw provider errors ("ContentSid Required", DLT template rejections) are
+      // meaningless to a clerk and read badly on screen. The detail is already
+      // in the server log; the UI gets the actionable version.
+      console.warn(`[Consent] Delivery failed for ${contactNumber}: ${result.error}`)
+      const needsWhatsAppSession = /contentsid|63016|outside/i.test(result.error || '')
+      message = needsWhatsAppSession
+        ? 'Message gateway session expired — showing the OTP on screen instead. (Rejoin the WhatsApp sandbox to restore delivery.)'
+        : 'Message gateway unavailable — showing the OTP on screen instead.'
     } else {
       message = 'No SMS gateway configured — dev mode active, OTP returned directly'
     }

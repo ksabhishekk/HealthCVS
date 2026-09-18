@@ -27,7 +27,7 @@ import uuid
 
 import numpy as np
 from pydantic import BaseModel
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from explain_tabular import get_fraud_score, explain_prediction, get_hybrid_fraud_score
 from nlp_helper import verify_prescription_consistency, verify_doctor_credentials, verify_doctor_domain
@@ -212,6 +212,40 @@ async def analyze_document(file: UploadFile = File(...)):
             os.remove(temp_path)
 
 
+@app.post("/analyze-supporting-document")
+async def analyze_supporting_document(
+    file: UploadFile = File(...),
+    expected_type: str = Form(...),
+    policy_number: str = Form(""),
+    diagnosis_terms: str = Form(""),
+):
+    """
+    OCR one supporting document (insurance card, identity document, consultation
+    papers, investigation report) and check it against the slot it was uploaded
+    to. Previously only the hospital bill was ever examined — see
+    document_checks.py for what is checked and why.
+    """
+    from document_checks import analyse_supporting_text
+
+    if file.content_type == "application/pdf":
+        result = analyse_supporting_text("", expected_type)
+        result["reason"] = "PDF supporting documents are not OCR processed yet — not checked."
+        return result
+
+    temp_path = _temp_path(file.filename or "supporting.jpg")
+    try:
+        with open(temp_path, "wb") as buf:
+            shutil.copyfileobj(file.file, buf)
+        try:
+            text = extract_text_from_image(temp_path)
+        except Exception as ocr_err:
+            text = f"[OCR failed: {ocr_err}]"
+        return analyse_supporting_text(text, expected_type, policy_number, diagnosis_terms)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 @app.get("/heatmap/{filename}")
 async def get_heatmap(filename: str):
     """Serve a previously generated heatmap image by filename."""
@@ -295,6 +329,31 @@ async def predict_nlp_validate(req: NLPValidateRequest):
         "procedure_match": procedure_match,
         "procedure_reason": procedure_reason,
     }
+
+
+class BillCheckRequest(BaseModel):
+    ocr_text: str
+    claimed_amount: float | None = None
+    patient_name: str = ''
+    admission_date: str = ''
+    discharge_date: str = ''
+
+
+@app.post("/predict/bill-check")
+async def predict_bill_check(req: BillCheckRequest):
+    """
+    Check that the uploaded bill is a medical bill at all, and that its contents
+    support the claim filed against it. The forgery model only answers whether
+    an image was edited — a genuine, unedited bill for a different patient and a
+    different amount passes it cleanly, so this is a separate question.
+    """
+    from bill_reconciliation import reconcile
+    return reconcile(req.ocr_text, {
+        "claimed_amount": req.claimed_amount,
+        "patient_name": req.patient_name,
+        "admission_date": req.admission_date,
+        "discharge_date": req.discharge_date,
+    })
 
 
 class DoctorVerifyRequest(BaseModel):

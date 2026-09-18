@@ -25,6 +25,10 @@ const path       = require('path')
 
 const { getContracts, updateFraudScoreOnBlockchain } = require('./services/blockchain')
 const Claim = require('./models/Claim')
+const { createFindings, applyFindings } = require('./services/findings')
+const { verifyHospitalIdentity } = require('./services/empanelment')
+const { checkContactReuse, checkDoctorTrackRecord } = require('./services/patientSignals')
+const { checkSupportingDocuments } = require('./services/supportingDocs')
 
 // ── IPFS upload via Pinata ────────────────────────────────────────────────────
 async function uploadToIPFS(payload) {
@@ -132,7 +136,23 @@ async function computeOnChainSignals(claimId, onChain) {
 }
 
 // ── Core AI pipeline for one claim ───────────────────────────────────────────
+// Claims currently being scored. The live event listener, the startup catch-up
+// scan and the manual "Run AI Oracle" button can all reach the same claim; two
+// concurrent runs would race to write TX4 and the second would revert.
+const inFlight = new Set()
+
 async function processClaimAI(claimId) {
+  const id = Number(claimId)
+  if (inFlight.has(id)) throw new Error(`Claim #${id} is already being scored`)
+  inFlight.add(id)
+  try {
+    return await runClaimPipeline(id)
+  } finally {
+    inFlight.delete(id)
+  }
+}
+
+async function runClaimPipeline(claimId) {
   const AI = process.env.AI_SERVICE_URL || 'http://localhost:8000'
 
   // Always pull the on-chain claim record — it's the source of truth for
@@ -202,9 +222,30 @@ async function processClaimAI(claimId) {
     await claim.save()
     console.log(`[Oracle] Created Claim #${claimId} with doctor regs: "${claim.doctorRegistrationNumber}", departments: "${claim.doctorDepartments}", ICD: "${claim.icdCode}"`)
   } else {
-    claim.status = 'ai_scoring'
+    // Refresh from this claim's own IPFS metadata before scoring. Only status
+    // and ceiling were updated here, which meant a stale record was scored as-is
+    // — and blockchainClaimId is not unique across chains: redeploying to a
+    // fresh local chain restarts numbering at 1, so a new claim #7 collided with
+    // a months-old claim #7 left in Mongo and the oracle scored the old
+    // diagnosis, amount and doctors while showing the old XAI record.
     if (marketCeiling) claim.marketCeiling = marketCeiling
+    if (ipfsData) {
+      const doctors = ipfsData.medical?.doctors || []
+      claim.icdCode                  = ipfsData.medical?.icdCode            || claim.icdCode
+      claim.prescriptionText         = ipfsData.medical?.diagnosis          || claim.prescriptionText
+      claim.claimedAmount            = ipfsData.medical?.totalClaimedAmount ?? claim.claimedAmount
+      claim.doctorRegistrationNumber = doctors.map(d => d.registrationNumber).filter(Boolean).join(', ')
+      claim.doctorDepartments        = doctors.map(d => d.department || d.specialization).filter(Boolean).join(', ')
+      claim.doctorNames              = doctors.map(d => d.name).filter(Boolean).join(', ')
+      claim.procedureCategories      = (ipfsData.medical?.procedures || []).map(p => p.category).filter(Boolean).join(', ')
+    }
+    // Drop the previous explanation so a failed run cannot leave a stale XAI
+    // record on screen looking like this claim's result.
+    claim.xaiCid = null
+    claim.fraudScore = null
+    claim.status = 'ai_scoring'
     await claim.save()
+    console.log(`[Oracle] Refreshed Claim #${claimId} from IPFS — ICD: "${claim.icdCode}", amount: ${claim.claimedAmount}, doctors: "${claim.doctorNames}"`)
   }
 
   // 2. Member A — CV + OCR
@@ -266,6 +307,47 @@ async function processClaimAI(claimId) {
 
   // Build OCR text: prefer live OCR result, fall back to stored prescription text
   const ocrText = cvResult.ocr_text || claim.prescriptionText || ''
+
+  // 3b. Reconcile the bill against the claim it was filed to support.
+  // The forgery model only asks whether the image was edited; a genuine,
+  // unedited bill belonging to a different patient for a different amount
+  // passes it cleanly. This asks the separate question of whether the document
+  // actually backs this claim — and whether it is a medical bill at all.
+  // Every document slot can legitimately hold a different file; the same file
+  // appearing in several slots means the clerk uploaded one image to satisfy a
+  // checklist rather than supplying the documents themselves. Comparing CIDs
+  // detects this exactly, since IPFS addresses content — identical bytes always
+  // produce an identical CID.
+  const docList = ipfsData?.documents || []
+  const cidCounts = {}
+  for (const d of docList) if (d?.cid) cidCounts[d.cid] = (cidCounts[d.cid] || 0) + 1
+  const duplicatedCids = Object.entries(cidCounts).filter(([, n]) => n > 1)
+  const duplicateDocuments = duplicatedCids.map(([cid, n]) => ({
+    count: n,
+    slots: docList.filter(d => d.cid === cid).map(d => d.type),
+  }))
+  if (duplicateDocuments.length) {
+    console.warn(`[Oracle] Duplicate documents: ${duplicateDocuments.map(d => `${d.count}x ${d.slots.join('/')}`).join(', ')}`)
+  }
+
+  let billCheck = { is_medical_bill: null, discrepancies: [], unchecked: [], billed_total: null, overclaim_ratio: null, document_type_reason: '' }
+  if (cvAvailable && ocrText) {
+    try {
+      const billRes = await axios.post(`${AI}/predict/bill-check`, {
+        ocr_text:       ocrText,
+        claimed_amount: claim.claimedAmount || null,
+        patient_name:   ipfsData?.patient?.name          || '',
+        admission_date: ipfsData?.admission?.admissionDate || '',
+        discharge_date: ipfsData?.admission?.dischargeDate || '',
+      }, { timeout: 30000 })
+      billCheck = billRes.data
+      if (billCheck.discrepancies?.length) {
+        console.warn(`[Oracle] Bill reconciliation findings: ${billCheck.discrepancies.join(' | ')}`)
+      }
+    } catch (e) {
+      console.warn(`[Oracle] Bill reconciliation skipped: ${e.message}`)
+    }
+  }
 
   // 3. Member B — tabular fraud first (fast, ~1s), then NLP (slow, up to 5 min via Apify)
   // NOTE: These CANNOT be run in parallel. The NLP endpoint uses blocking Python code
@@ -342,49 +424,103 @@ async function processClaimAI(claimId) {
     console.warn(`[Oracle] CV unavailable — scoring on tabular + NLP only, weights renormalised (${usedWeight.toFixed(2)})`)
   }
 
-  // Override: unverified doctor floors score at 75 (auto-reject threshold) —
-  // this is an identity-fraud signal (the doctor may not even be real).
-  if (!doctorOk) {
-    console.warn(`[Oracle] Doctor NOT verified — flooring score to max(${finalScore}, 75)`)
-    finalScore = Math.max(finalScore, 75)
-  }
+  // ── 4b. Findings, accumulated ────────────────────────────────────────────────
+  // Each finding carries a floor (the minimum severity it justifies) and a kind.
+  // Confirmed findings escalate the score when several fire independently;
+  // "unverified" ones mean a check could not run and never escalate. Floors used
+  // to be applied one at a time with Math.max, so five independent findings
+  // scored the same as one — see services/findings.js.
+  const findings = createFindings()
 
-  // Override: doctor verified as real, but their department doesn't match the
-  // diagnosis (e.g. an ENT surgeon signing off on a cardiac claim). This is a
-  // weaker signal than an unverified doctor — floors into "manual review"
-  // territory (60) rather than the 75 auto-reject floor, since it's plausible
-  // (referrals, multi-disciplinary care) and should be a human judgment call.
-  if (domainMatch === false) {
-    console.warn(`[Oracle] Doctor domain mismatch — flooring score to max(${finalScore}, 60). ${domainReason}`)
-    finalScore = Math.max(finalScore, 60)
-  }
-
-  // Override: the registration number is genuine, but it belongs to someone
-  // other than the doctor named on the claim. Verifying the number alone only
-  // proves the number exists — this catches a real credential being attached
-  // to a different name. Floored to manual review (60) rather than 75, since
-  // transliteration and name-format differences are plausible and a human
-  // should make the call.
   const doctorNameMatch  = nlpRes.data.doctor_name_match
   const doctorNameReason = nlpRes.data.doctor_name_reason || ''
+  const procedureMatch   = nlpRes.data.procedure_match
+  const procedureReason  = nlpRes.data.procedure_reason || ''
 
-  // Override: the billed procedure belongs to a specialty that doesn't treat
-  // this diagnosis (e.g. neurosurgery billed against influenza). Classic
-  // upcoding. Floored to manual review rather than auto-reject — bundled
-  // supporting procedures are legitimate and a human should judge.
-  const procedureMatch  = nlpRes.data.procedure_match
-  const procedureReason = nlpRes.data.procedure_reason || ''
-  if (doctorNameMatch === false) {
-    console.warn(`[Oracle] Doctor name mismatch — flooring score to max(${finalScore}, 60). ${doctorNameReason}`)
-    finalScore = Math.max(finalScore, 60)
+  // Doctor: unverifiable (may not exist), wrong specialty, or a genuine
+  // registration attached to someone else's name.
+  if (!doctorOk) findings.confirmed('doctor_unverified', 75, 'Treating doctor could not be verified in the NMC registry')
+  if (domainMatch === false) findings.confirmed('doctor_domain_mismatch', 60, domainReason)
+  if (doctorNameMatch === false) findings.confirmed('doctor_name_mismatch', 60, doctorNameReason)
+
+  // Billed procedure unrelated to the diagnosis — upcoding.
+  if (procedureMatch === false) findings.confirmed('procedure_mismatch', 60, procedureReason)
+
+  // Bill reconciliation. The overclaim is direct documentary evidence of
+  // inflation; name/date disagreements are real but OCR-sensitive.
+  if (!cvAvailable) {
+    findings.unverified('bill_not_analysed', 60, 'The hospital bill could not be analysed, so the claimed amount has not been verified against it.')
+  }
+  if (billCheck.is_medical_bill === false) findings.confirmed('bill_not_medical', 75, billCheck.document_type_reason)
+  if (billCheck.overclaim_ratio) {
+    findings.confirmed('bill_overclaim', 75, `Claim exceeds the billed total by ${billCheck.overclaim_ratio.toFixed(2)}x`)
+  }
+  const otherBillDiscrepancies = (billCheck.discrepancies || []).filter(d => !/billed amount/.test(d))
+  if (otherBillDiscrepancies.length) findings.confirmed('bill_mismatch', 60, otherBillDiscrepancies.join(' '))
+  for (const u of billCheck.unchecked || []) findings.unverified('bill_unverified', 60, u)
+
+  if (duplicateDocuments.length) {
+    findings.confirmed('duplicate_documents', 60,
+      `The same file was submitted for ${duplicateDocuments.map(d => `${d.count} slots (${d.slots.join(', ')})`).join('; ')}`)
   }
 
-  if (procedureMatch === false) {
-    console.warn(`[Oracle] Procedure/diagnosis mismatch — flooring score to max(${finalScore}, 60). ${procedureReason}`)
-    finalScore = Math.max(finalScore, 60)
+  // Hospital identity: empanelled, active, and did one of its own registered
+  // wallets sign TX2? A code can be typed; a signature cannot be forged.
+  let hospitalCheck = { match: null, reason: 'Hospital identity was not checked.' }
+  try {
+    hospitalCheck = await verifyHospitalIdentity({ code: ipfsData?.hospital?.code, clerkAddress: onChain?.clerkAddress })
+  } catch (e) {
+    hospitalCheck = { match: null, reason: `Hospital identity check failed: ${e.message}` }
+  }
+  if (hospitalCheck.match === false) findings.confirmed('hospital_not_verified', 75, hospitalCheck.reason)
+  else if (hospitalCheck.match === null) findings.unverified('hospital_unverified', 0, hospitalCheck.reason)
+
+  // Consent-contact reuse — the ghost-patient pattern.
+  let contactCheck = { match: null, reason: 'Contact reuse was not checked.' }
+  try {
+    if (onChain?.patientAadhaarHash) contactCheck = await checkContactReuse(onChain.patientAadhaarHash)
+  } catch (e) {
+    contactCheck = { match: null, reason: `Contact reuse check failed: ${e.message}` }
+  }
+  if (contactCheck.match === false) findings.confirmed('consent_contact_reused', 60, contactCheck.reason)
+
+  // Treating doctor's record in past human reviews.
+  let doctorRecord = null
+  try {
+    doctorRecord = await checkDoctorTrackRecord(claim.doctorRegistrationNumber, claimId)
+  } catch (e) {
+    console.warn(`[Oracle] Doctor track record unavailable: ${e.message}`)
+  }
+  if (doctorRecord?.concerning) findings.confirmed('doctor_track_record', 60, doctorRecord.reason)
+
+  // Every supporting document, not just the bill.
+  let supportingCheck = { documents: [], findings: [] }
+  try {
+    supportingCheck = await checkSupportingDocuments({
+      documents: ipfsData?.documents,
+      aiUrl: AI,
+      gateway: process.env.PINATA_GATEWAY || 'gateway.pinata.cloud',
+      aadhaarHash: onChain?.patientAadhaarHash,
+      patientPan: ipfsData?.patient?.panNumber,
+      policyNumber: ipfsData?.insurance?.policyNumber,
+      diagnosisTerms: String(ipfsData?.medical?.diagnosis || '').split(/[^A-Za-z]+/).filter(w => w.length >= 5).join(','),
+    })
+  } catch (e) {
+    console.warn(`[Oracle] Supporting document checks skipped: ${e.message}`)
+  }
+  for (const f of supportingCheck.findings) {
+    if (f.kind === 'confirmed') findings.confirmed(f.key, f.floor, f.label)
+    else findings.unverified(f.key, f.floor, f.label)
   }
 
-  finalScore = Math.min(Math.max(finalScore, 0), 100)
+  const scoring = applyFindings(finalScore, findings.items)
+  for (const f of findings.items) {
+    console.warn(`[Oracle] ${f.kind === 'confirmed' ? 'Finding' : 'Not verified'} (floor ${f.floor}): ${f.label}`)
+  }
+  if (scoring.escalation) {
+    console.warn(`[Oracle] ${scoring.confirmedCount} independent findings — score escalated by ${scoring.escalation}`)
+  }
+  finalScore = Math.min(Math.max(scoring.score, 0), 100)
   console.log(`[Oracle] Final fraud score: ${finalScore}/100`)
 
   // 5. Build XAI payload and pin to IPFS
@@ -407,6 +543,20 @@ async function processClaimAI(claimId) {
       doctorNameReason,
       procedureMatch,
       procedureReason,
+      billIsMedical:        billCheck.is_medical_bill,
+      billTypeReason:       billCheck.document_type_reason,
+      billedTotal:          billCheck.billed_total,
+      billOverclaimRatio:   billCheck.overclaim_ratio,
+      billDiscrepancies:    billCheck.discrepancies || [],
+      billUnchecked:        billCheck.unchecked || [],
+      billedTotalLabel:     billCheck.billed_total_label || null,
+      duplicateDocuments,
+      hospitalIdentity:    hospitalCheck,
+      contactReuse:        contactCheck,
+      doctorTrackRecord:   doctorRecord,
+      supportingDocuments: supportingCheck.documents,
+      findings:            findings.items,
+      escalation:          scoring.escalation,
       semanticSimilarity: semanticSimilarity ?? null,
       domainMatch,
       expectedDepartments,
@@ -442,6 +592,7 @@ async function processClaimAI(claimId) {
   claim.daysSinceLastClaim    = signals.daysSinceLastClaim
   claim.hospitalRejectionRate = signals.hospitalRejectionRate
   claim.status                = 'ai_scored'
+  claim.firedSignals          = findings.items.filter(f => f.kind === 'confirmed').map(f => f.key)
   await claim.save()
 
   // 7. TX4 — write fraud score on-chain via existing blockchain.js
@@ -452,6 +603,57 @@ async function processClaimAI(claimId) {
 }
 
 // ── Oracle event listener ─────────────────────────────────────────────────────
+async function scoreWithRetries(id, source) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const result = await processClaimAI(id)
+      console.log(`[Oracle] ✅ Claim #${id} scored: ${result.finalScore}/100 (TX: ${result.txHash})`)
+      return
+    } catch (err) {
+      if (/already being scored/.test(err.message)) return
+      console.error(`[Oracle] Attempt ${attempt}/3 failed for Claim #${id} (${source}): ${err.message}`)
+      if (attempt === 3) {
+        try {
+          await Claim.findOneAndUpdate({ blockchainClaimId: id }, { status: 'oracle_failed', oracleError: err.message })
+        } catch {}
+        console.error(`[Oracle] ❌ All retries exhausted for Claim #${id}. Marked as oracle_failed.`)
+      } else {
+        const delay = 5000 * attempt
+        console.log(`[Oracle] Retrying in ${delay / 1000}s...`)
+        await new Promise((r) => setTimeout(r, delay))
+      }
+    }
+  }
+}
+
+// Scores every claim still waiting at DoctorAuthenticated. The live
+// subscription only sees events emitted while this process is running, so a
+// claim authenticated while the backend was down or restarting used to sit
+// unscored forever. On-chain status is the source of truth, so claims that were
+// already scored are never re-processed.
+async function catchUpMissedClaims() {
+  const { claimSubmission } = getContracts()
+  if (!claimSubmission) return
+  try {
+    const total = Number(await claimSubmission.getTotalClaims())
+    const waiting = []
+    for (let id = 1; id <= total; id++) {
+      try {
+        const c = await claimSubmission.getClaim(id)
+        if (Number(c.status) === 1) waiting.push(id)   // ClaimStatus.DoctorAuthenticated
+      } catch {}
+    }
+    if (!waiting.length) {
+      console.log('[Oracle] Catch-up: no claims waiting for a fraud score.')
+      return
+    }
+    console.log(`[Oracle] Catch-up: ${waiting.length} claim(s) authenticated while the oracle was offline — scoring #${waiting.join(', #')}`)
+    for (const id of waiting) await scoreWithRetries(id, 'catch-up')
+  } catch (e) {
+    console.warn(`[Oracle] Catch-up scan failed: ${e.message}`)
+  }
+}
+
 function startOracleListener() {
   const { claimSubmission } = getContracts()
 
@@ -466,31 +668,11 @@ function startOracleListener() {
   claimSubmission.on('DoctorAuthenticated', async (claimId) => {
     const id = Number(claimId)
     console.log(`\n[Oracle] ▶ Event: DoctorAuthenticated — Claim #${id}. Starting AI pipeline...`)
-
-    // 3 retries with exponential backoff
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const result = await processClaimAI(id)
-        console.log(`[Oracle] ✅ Claim #${id} scored: ${result.finalScore}/100 (TX: ${result.txHash})`)
-        break
-      } catch (err) {
-        console.error(`[Oracle] Attempt ${attempt}/3 failed for Claim #${id}: ${err.message}`)
-        if (attempt === 3) {
-          try {
-            await Claim.findOneAndUpdate(
-              { blockchainClaimId: id },
-              { status: 'oracle_failed', oracleError: err.message }
-            )
-          } catch {}
-          console.error(`[Oracle] ❌ All retries exhausted for Claim #${id}. Marked as oracle_failed.`)
-        } else {
-          const delay = 5000 * attempt
-          console.log(`[Oracle] Retrying in ${delay / 1000}s...`)
-          await new Promise((r) => setTimeout(r, delay))
-        }
-      }
-    }
+    await scoreWithRetries(id, 'event')
   })
+
+  // Subscribe first, then scan, so nothing authenticated during the scan is missed.
+  catchUpMissedClaims()
 }
 
 module.exports = { startOracleListener, processClaimAI }

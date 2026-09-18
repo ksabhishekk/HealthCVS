@@ -8,6 +8,7 @@ const {
 const { uploadToPinata, ipfsGatewayUrl } = require('../services/pinata')
 const Patient = require('../models/Patient')
 const ClaimConsent = require('../models/ClaimConsent')
+const { isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE } = require('../services/aadhaar')
 
 const router = express.Router()
 router.use(authenticate)
@@ -71,6 +72,31 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
       } catch (err) {
         console.warn(`[Hospital] Could not fetch review notes from insurance portal: ${err.message}`)
       }
+    }
+
+    // Open requests for more information from the insurer, so the hospital can
+    // answer them instead of the claim stalling with no explanation.
+    if (process.env.INSURANCE_PORTAL_URL) {
+      try {
+        const reqRes = await fetch(`${process.env.INSURANCE_PORTAL_URL}/api/claims/${id}/info-requests`, {
+          headers: { 'x-api-key': process.env.INSURANCE_API_KEY || '' },
+          signal: AbortSignal.timeout(4000),
+        })
+        if (reqRes.ok) base.infoRequests = (await reqRes.json()).infoRequests || []
+      } catch (err) {
+        console.warn(`[Hospital] Could not fetch information requests: ${err.message}`)
+      }
+    }
+
+    // Claimed / recommended / approved amounts, so a partial settlement is visible here.
+    try {
+      const { autoAdjudication } = getContracts()
+      if (autoAdjudication) {
+        const [claimed, recommended, approved] = await autoAdjudication.getSettlement(BigInt(id))
+        base.settlement = { claimedAmount: Number(claimed), recommendedAmount: Number(recommended), approvedAmount: Number(approved) }
+      }
+    } catch {
+      // contract deployed before partial settlement existed
     }
   }
 
@@ -171,6 +197,14 @@ router.post('/submit', async (req, res) => {
       aadhaarHash = ethers.keccak256(ethers.toUtf8Bytes(claimData.aadhaarNumber))
     }
     if (!aadhaarHash) return res.status(400).json({ error: 'aadhaarHash or aadhaarNumber required' })
+
+    // A patient entered inline for the first time must carry a real Aadhaar
+    // number. Existing patients are found by hash and not re-validated, so
+    // records created before this check keep working.
+    if (claimData.aadhaarNumber && aadhaarChecksumEnforced() && !isValidAadhaar(claimData.aadhaarNumber)) {
+      const existingPatient = await Patient.findOne({ aadhaarHash }).lean()
+      if (!existingPatient) return res.status(400).json({ error: AADHAAR_INVALID_MESSAGE })
+    }
 
     // --- Patient consent gate (hospital-patient collusion mitigation) ---
     // Requires a verified OTP consentToken tied to the exact contact number on
@@ -376,6 +410,30 @@ router.post('/submit', async (req, res) => {
       ipfsUrl: ipfsGatewayUrl(metadataCid),
       warnings: policyWarnings.length ? policyWarnings : undefined,
     })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/claims/:id/info-requests/:requestId/respond — answer the insurer.
+// Documents are uploaded to IPFS through /api/documents/upload first and their
+// CIDs passed here.
+router.post('/:id/info-requests/:requestId/respond', async (req, res) => {
+  try {
+    if (!process.env.INSURANCE_PORTAL_URL) return res.status(503).json({ error: 'Insurance portal is not configured' })
+    const response = String(req.body.response || '').trim()
+    if (!response) return res.status(400).json({ error: 'Write a response for the insurer' })
+
+    const url = `${process.env.INSURANCE_PORTAL_URL}/api/claims/${Number(req.params.id)}/info-requests/${encodeURIComponent(req.params.requestId)}/response`
+    const upstream = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.INSURANCE_API_KEY || '' },
+      body: JSON.stringify({ response, documents: req.body.documents || [], respondedByName: req.user?.name || 'Hospital' }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = await upstream.json().catch(() => ({}))
+    if (!upstream.ok) return res.status(upstream.status).json({ error: data.error || 'The insurance portal rejected the response' })
+    res.json(data)
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
-import { getClaim, authenticateClaim } from '../../api/claims'
+import { ArrowLeft, ExternalLink, FileText, CheckCircle, AlertTriangle, Loader2, MessageSquare, Upload } from 'lucide-react'
+import { getClaim, authenticateClaim, respondToInfoRequest } from '../../api/claims'
+import { uploadDocument } from '../../api/documents'
 import ClaimStatusBadge from '../../components/ClaimStatusBadge'
 import { useAuth } from '../../context/AuthContext'
 
@@ -41,6 +42,78 @@ function TxBanner({ tx, label }) {
       <CheckCircle className="w-4 h-4 shrink-0" />
       {label} TX:{' '}
       <span className="font-mono">{shortenHash(tx)}</span>
+    </div>
+  )
+}
+
+// One insurer request for more information, with a reply form while it is open.
+function InfoRequestCard({ claimId, request, onAnswered }) {
+  const [response, setResponse] = useState('')
+  const [files, setFiles] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const open = request.status === 'open'
+
+  const submit = async () => {
+    setBusy(true)
+    setErr('')
+    try {
+      const documents = []
+      for (const file of files) {
+        const { data } = await uploadDocument(file)
+        documents.push({ name: data.fileName, cid: data.cid })
+      }
+      await respondToInfoRequest(claimId, request._id, { response, documents })
+      onAnswered()
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message || 'Could not send the response')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className={`rounded-lg border px-4 py-3 mb-3 text-sm ${open ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-medium text-gray-900">{request.message}</span>
+        <span className={`badge shrink-0 ${open ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+          {open ? 'Response needed' : 'Answered'}
+        </span>
+      </div>
+      {request.requestedDocuments?.length > 0 && (
+        <p className="text-xs text-gray-600 mt-1">Requested documents: {request.requestedDocuments.map(d => DOC_LABELS[d] || d).join(', ')}</p>
+      )}
+      <p className="text-xs text-gray-400 mt-0.5">From {request.requestedByName || 'the insurer'} · {fmtTs(request.requestedAt)}</p>
+
+      {open ? (
+        <div className="mt-3">
+          <textarea className="input resize-none h-20 text-sm" placeholder="Your response to the insurer"
+            value={response} onChange={e => setResponse(e.target.value)} disabled={busy} />
+          <div className="flex items-center gap-2 mt-2">
+            <label className="inline-flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+              <Upload className="w-3.5 h-3.5" /> Attach documents
+              <input type="file" multiple accept=".pdf,image/*" className="hidden"
+                onChange={e => setFiles(Array.from(e.target.files || []))} disabled={busy} />
+            </label>
+            {files.length > 0 && <span className="text-xs text-gray-500">{files.map(f => f.name).join(', ')}</span>}
+          </div>
+          {err && <p className="text-xs text-red-600 mt-1">{err}</p>}
+          <button className="btn-primary mt-2" disabled={busy || !response.trim()} onClick={submit}>
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
+            {busy ? 'Sending…' : 'Send response'}
+          </button>
+        </div>
+      ) : (
+        <div className="mt-2 border-t border-green-200 pt-2">
+          <p className="text-xs text-gray-800 whitespace-pre-wrap">{request.response}</p>
+          {request.responseDocuments?.map((d, i) => (
+            <a key={i} href={ipfsUrl(d.cid)} target="_blank" rel="noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline mr-3 mt-1">
+              <ExternalLink className="w-3 h-3" /> {d.name}
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -158,6 +231,25 @@ export default function ClaimDetail() {
             <span className="font-semibold">{s === 7 ? 'Insurer Rejection Reason:' : 'Insurer Review Notes:'}</span>
             <p className={`mt-1 text-xs leading-relaxed font-mono p-2 rounded ${s === 7 ? 'bg-white/40 border border-red-100 text-red-700' : 'bg-white/40 border border-blue-100 text-blue-700'}`}>{claim.reviewNotes}</p>
           </div>
+        </div>
+      )}
+
+      {claim.settlement?.approvedAmount > 0 && (
+        <div className={`border px-4 py-3 rounded-lg mb-5 text-sm ${claim.settlement.approvedAmount < claim.settlement.claimedAmount ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+          <strong>{s === 5 ? 'Settled' : 'Approved by insurer'}:</strong> {fmt(claim.settlement.approvedAmount)} of {fmt(claim.settlement.claimedAmount)} claimed
+          {claim.settlement.approvedAmount < claim.settlement.claimedAmount && ' — the insurer approved a partial settlement'}
+        </div>
+      )}
+
+      {(claim.infoRequests || []).length > 0 && (
+        <div className="card p-5 mb-5">
+          <div className="flex items-center gap-2 mb-3">
+            <MessageSquare className="w-4 h-4 text-amber-600" />
+            <h2 className="font-semibold text-gray-900">Insurer requests for more information</h2>
+          </div>
+          {claim.infoRequests.map(r => (
+            <InfoRequestCard key={r._id} claimId={id} request={r} onAnswered={load} />
+          ))}
         </div>
       )}
 

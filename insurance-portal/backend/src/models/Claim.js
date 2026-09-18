@@ -57,6 +57,36 @@ const ClaimSchema = new mongoose.Schema(
 
     oracleError: { type: String, default: null }, // last error message if oracle_failed
     reviewNotes: { type: String, default: null }, // insurer review notes or rejection reason
+
+    // ── Reviewer feedback loop ────────────────────────────────────────────────
+    // The oracle records which checks fired; TX6 records what the reviewer
+    // decided. Comparing the two over time shows which signals reviewers agree
+    // with — previously decisions were never compared against the flags at all.
+    firedSignals: [{ type: String }],
+    reviewDecision: {
+      approved:       { type: Boolean },
+      approvedAmount: { type: Number },
+      claimedAmount:  { type: Number },
+      decidedBy:      { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      decidedByName:  { type: String },
+      decidedAt:      { type: Date },
+    },
+
+    // ── Requests for more information ─────────────────────────────────────────
+    // A reviewer could only approve or reject on what was already submitted.
+    // These let them ask the hospital for a legible bill, the real treating
+    // doctor, or missing documents, and see the answer on the same claim.
+    infoRequests: [{
+      message:            { type: String, required: true },
+      requestedDocuments: [{ type: String }],
+      requestedByName:    { type: String },
+      requestedAt:        { type: Date, default: Date.now },
+      status:             { type: String, enum: ['open', 'responded'], default: 'open' },
+      response:           { type: String, default: '' },
+      responseDocuments:  [{ name: String, cid: String, type: { type: String } }],
+      respondedByName:    { type: String },
+      respondedAt:        { type: Date },
+    }],
   },
   { timestamps: true }
 )

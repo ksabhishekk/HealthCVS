@@ -135,75 +135,157 @@ describe("HealthCVS — Full 7-Step Claim Flow", function () {
     console.log(`    ✓ Fraud score written: ${fraudScore}/100 (low risk)`);
   });
 
+  // Creates a claim and advances it to FraudScored, ready for TX5.
+  async function newScoredClaim(code, amount, score = 10) {
+    const tx = await claimSubmission.connect(clerk).initializeClaim(
+      aadhaarHash, code, amount, "QmBill", "QmRx", "QmMeta"
+    );
+    const receipt = await tx.wait();
+    const event = receipt.logs
+      .map(log => { try { return claimSubmission.interface.parseLog(log); } catch { return null; } })
+      .find(e => e && e.name === "ClaimInitialized");
+    const id = event.args.claimId;
+    await claimSubmission.connect(doctor).authenticateClaim(id);
+    await claimSubmission.connect(admin).updateFraudScore(id, score);
+    return id;
+  }
+
+  let overClaimId;
+
   // ── TX 5 ──────────────────────────────────────────────────────────────────
   it("TX 5 — AutoAdjudication engine approves claim (within PM-JAY ceiling)", async function () {
-    const tx = await autoAdjudication.connect(insurer).adjudicateClaim(claimId);
+    const tx = await autoAdjudication.connect(insurer).adjudicateClaim(claimId, ["S030008"], [8500]);
 
     await expect(tx)
       .to.emit(autoAdjudication, "ClaimAdjudicated")
-      .withArgs(claimId, true, "Approved by AutoAdjudication engine", await getTimestamp(tx));
+      .withArgs(claimId, true, "Approved by AutoAdjudication engine", 8500, await getTimestamp(tx));
 
     const claim = await claimSubmission.getClaim(claimId);
     expect(claim.status).to.equal(3); // Adjudicated
+    expect(await autoAdjudication.recommendedAmounts(claimId)).to.equal(8500n);
 
     const ceiling = await autoAdjudication.getPMJAYRate("S030008");
     console.log(`    ✓ Auto-approved — ₹8,500 is within PM-JAY ceiling of ₹${ceiling}`);
   });
 
   // ── TX 5 (edge case) ──────────────────────────────────────────────────────
-  it("TX 5 (edge case) — AutoAdjudication flags claim that exceeds PM-JAY ceiling", async function () {
-    // Create a second claim that exceeds the ceiling
-    const tx2 = await claimSubmission.connect(clerk).initializeClaim(
-      aadhaarHash,
-      "S030008",
-      99999,           // exceeds ₹10,000 ceiling
-      "QmBill_over",
-      "QmRx_over",
-      "QmDisch_over"
-    );
-    const receipt = await tx2.wait();
-    const event = receipt.logs
-      .map(log => { try { return claimSubmission.interface.parseLog(log); } catch { return null; } })
-      .find(e => e && e.name === "ClaimInitialized");
-    const overClaimId = event.args.claimId;
-
-    await claimSubmission.connect(doctor).authenticateClaim(overClaimId);
-    await claimSubmission.connect(admin).updateFraudScore(overClaimId, 10);
-    await autoAdjudication.connect(insurer).adjudicateClaim(overClaimId);
+  it("TX 5 (edge case) — flags an over-ceiling claim and recommends the ceiling amount", async function () {
+    overClaimId = await newScoredClaim("S030008", 99999);
+    await autoAdjudication.connect(insurer).adjudicateClaim(overClaimId, ["S030008"], [99999]);
 
     const claim = await claimSubmission.getClaim(overClaimId);
     expect(claim.status).to.equal(6); // Flagged
     expect(claim.flagReason).to.equal("Claimed amount exceeds PM-JAY HBP ceiling rate");
+    expect(await autoAdjudication.recommendedAmounts(overClaimId)).to.equal(10000n);
 
-    console.log(`    ✓ Over-ceiling claim correctly FLAGGED — ₹99,999 > ₹10,000 ceiling`);
+    console.log(`    ✓ Over-ceiling claim FLAGGED — ₹99,999 claimed, ₹10,000 recommended`);
+  });
+
+  // ── TX 5 (regression) — the total-vs-primary-ceiling bug ──────────────────
+  it("TX 5 (regression) — approves a multi-procedure claim whose lines are each within their own ceilings", async function () {
+    // Appendectomy ₹15,000 (ceiling ₹15,000) + consultation ₹5,000 (ceiling ₹5,000).
+    // The old rule compared the ₹20,000 total against the primary ceiling of
+    // ₹15,000 alone and flagged this legitimate claim.
+    const id = await newScoredClaim("S020001", 20000);
+    await autoAdjudication.connect(insurer).adjudicateClaim(id, ["S020001", "S010001"], [15000, 5000]);
+
+    const claim = await claimSubmission.getClaim(id);
+    expect(claim.status).to.equal(3); // Adjudicated, not Flagged
+    expect(await autoAdjudication.recommendedAmounts(id)).to.equal(20000n);
+    console.log(`    ✓ Multi-procedure claim approved — each line checked against its own ceiling`);
+  });
+
+  it("TX 5 — rejects an itemisation that does not add up to the on-chain total", async function () {
+    const id = await newScoredClaim("S030008", 8500);
+    await expect(
+      autoAdjudication.connect(insurer).adjudicateClaim(id, ["S030008"], [1000])
+    ).to.be.revertedWith("AutoAdjudication: itemisation does not add up to the claimed amount");
+  });
+
+  it("TX 5 — rejects an itemisation that omits the primary procedure", async function () {
+    const id = await newScoredClaim("S030008", 5000);
+    await expect(
+      autoAdjudication.connect(insurer).adjudicateClaim(id, ["S010001"], [5000])
+    ).to.be.revertedWith("AutoAdjudication: itemisation must include the primary procedure");
+  });
+
+  it("TX 5 — flags a claim containing a procedure outside the PM-JAY catalog", async function () {
+    const id = await newScoredClaim("S030008", 8000);
+    await autoAdjudication.connect(insurer).adjudicateClaim(id, ["S030008", "S999999"], [5000, 3000]);
+    const claim = await claimSubmission.getClaim(id);
+    expect(claim.status).to.equal(6);
+    expect(claim.flagReason).to.equal("Procedure code not found in PM-JAY HBP catalog");
+    // Only the catalogued line is supported by the rate card.
+    expect(await autoAdjudication.recommendedAmounts(id)).to.equal(5000n);
   });
 
   // ── TX 6 ──────────────────────────────────────────────────────────────────
-  it("TX 6 — Insurer reviews and approves the adjudicated claim", async function () {
-    const tx = await autoAdjudication.connect(insurer).insurerReview(claimId, true);
+  it("TX 6 — Insurer reviews and approves the adjudicated claim in full", async function () {
+    const tx = await autoAdjudication.connect(insurer).insurerReview(claimId, true, 8500);
 
     await expect(tx)
       .to.emit(autoAdjudication, "InsurerReviewed")
-      .withArgs(claimId, true, await getTimestamp(tx));
+      .withArgs(claimId, true, 8500, await getTimestamp(tx));
 
     const claim = await claimSubmission.getClaim(claimId);
     expect(claim.status).to.equal(4); // InsurerReviewed
+    expect(await autoAdjudication.approvedAmounts(claimId)).to.equal(8500n);
 
-    console.log(`    ✓ Insurer approved claim #${claimId}`);
+    console.log(`    ✓ Insurer approved claim #${claimId} in full`);
+  });
+
+  it("TX 6 (partial) — Insurer approves a flagged claim for less than was claimed", async function () {
+    const tx = await autoAdjudication.connect(insurer).insurerReview(overClaimId, true, 10000);
+    await expect(tx)
+      .to.emit(autoAdjudication, "InsurerReviewed")
+      .withArgs(overClaimId, true, 10000, await getTimestamp(tx));
+
+    const claim = await claimSubmission.getClaim(overClaimId);
+    expect(claim.status).to.equal(4);
+    expect(claim.flagReason).to.equal("Partially approved by insurer");
+    const [claimed, recommended, approved] = await autoAdjudication.getSettlement(overClaimId);
+    expect(claimed).to.equal(99999n);
+    expect(recommended).to.equal(10000n);
+    expect(approved).to.equal(10000n);
+    console.log(`    ✓ Partial approval recorded — ₹10,000 of ₹99,999`);
+  });
+
+  it("TX 6 — cannot approve more than was claimed", async function () {
+    const id = await newScoredClaim("S030008", 4000);
+    await autoAdjudication.connect(insurer).adjudicateClaim(id, ["S030008"], [4000]);
+    await expect(
+      autoAdjudication.connect(insurer).insurerReview(id, true, 4001)
+    ).to.be.revertedWith("AutoAdjudication: cannot approve more than was claimed");
+  });
+
+  it("TX 6 — cannot approve a zero amount", async function () {
+    const id = await newScoredClaim("S030008", 3000);
+    await autoAdjudication.connect(insurer).adjudicateClaim(id, ["S030008"], [3000]);
+    await expect(
+      autoAdjudication.connect(insurer).insurerReview(id, true, 0)
+    ).to.be.revertedWith("AutoAdjudication: approved amount must be greater than zero");
   });
 
   // ── TX 7 ──────────────────────────────────────────────────────────────────
-  it("TX 7 — Insurer settles the claim (payment simulation)", async function () {
+  it("TX 7 — Insurer settles the claim for the approved amount", async function () {
     const tx = await autoAdjudication.connect(insurer).settleClaim(claimId);
 
     await expect(tx)
       .to.emit(autoAdjudication, "ClaimSettled")
-      .withArgs(claimId, clerk.address, await getTimestamp(tx));
+      .withArgs(claimId, clerk.address, 8500, await getTimestamp(tx));
 
     const claim = await claimSubmission.getClaim(claimId);
     expect(claim.status).to.equal(5); // Settled
 
-    console.log(`    ✓ Claim #${claimId} SETTLED — payment simulated to hospital wallet`);
+    console.log(`    ✓ Claim #${claimId} SETTLED — ₹8,500 paid to hospital wallet`);
+  });
+
+  it("TX 7 (partial) — settlement pays the approved amount, not the claimed amount", async function () {
+    const tx = await autoAdjudication.connect(insurer).settleClaim(overClaimId);
+    await expect(tx)
+      .to.emit(autoAdjudication, "ClaimSettled")
+      .withArgs(overClaimId, clerk.address, 10000, await getTimestamp(tx));
+    console.log(`    ✓ Partial settlement paid ₹10,000 against a ₹99,999 claim`);
     console.log(`\n    === Full 7-step audit trail complete on-chain ===\n`);
   });
 

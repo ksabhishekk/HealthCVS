@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Search, UserPlus, User, CheckCircle2 } from 'lucide-react'
 import { lookupPatient } from '../../../api/patients'
+import { isValidAadhaar, AADHAAR_INVALID_MESSAGE } from '../../../lib/aadhaar'
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown']
 
@@ -19,7 +20,12 @@ export default function Step1Patient({ data, update, onNext }) {
     setLookupError('')
     try {
       const { data: res } = await lookupPatient(aadhaar)
-      update({ patient: res.patient, aadhaarHash: res.aadhaarHash })
+      // Keep the raw Aadhaar alongside the hash. The consent step needs it to
+      // ask the insurer which number/address it holds for this patient; the
+      // stored Patient record only carries the hash and the last four digits,
+      // so without this the lookup was silently skipped and the OTP fell back
+      // to whatever number the clerk typed on the form.
+      update({ patient: res.patient, aadhaarHash: res.aadhaarHash, aadhaarNumber: aadhaar })
       setMode('found')
     } catch (err) {
       if (err.response?.status === 404) {
@@ -48,7 +54,7 @@ export default function Step1Patient({ data, update, onNext }) {
 
   const canProceed = () => {
     if (!data.admission.admissionDate || !/^\d{10}$/.test(data.admission.contactNumber || '')) return false
-    if (mode === 'new' && (!newPatient.name || !newPatient.dateOfBirth || !newPatient.gender || !/^\d{10}$/.test(newPatient.contactNumber))) return false
+    if (mode === 'new' && (!newPatient.name || !newPatient.dateOfBirth || !newPatient.gender || !/^\d{10}$/.test(newPatient.contactNumber) || !isValidAadhaar(aadhaar))) return false
     return data.patient !== null || (mode === 'new' && newPatient.name)
   }
 
@@ -116,6 +122,9 @@ export default function Step1Patient({ data, update, onNext }) {
           <p className="text-xs text-gray-500 mb-4 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
             Patient not found in system. Fill in their details below — Aadhaar will be hashed before storage.
           </p>
+          {!isValidAadhaar(aadhaar) && (
+            <p className="text-xs text-red-700 mb-4 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{AADHAAR_INVALID_MESSAGE}</p>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="label">Full Name <span className="text-red-500">*</span></label>

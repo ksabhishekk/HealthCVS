@@ -4,6 +4,7 @@ const { ethers } = require('ethers')
 const { authenticate, requireRole } = require('../middleware/auth')
 const { registerPatientOnBlockchain, updatePatientWalletOnBlockchain, isPatientActive, getContracts } = require('../services/blockchain')
 const EnrolledPatient = require('../models/EnrolledPatient')
+const { isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE } = require('../services/aadhaar')
 
 const router = express.Router()
 router.use(authenticate)
@@ -19,11 +20,15 @@ router.post('/register',
   body('expiryDate').isISO8601().withMessage('Expiry date must be a valid date'),
   body('contactNumber').optional({ checkFalsy: true }).matches(/^\d{10}$/).withMessage('Contact number must be 10 digits'),
   body('walletAddress').optional({ checkFalsy: true }).isEthereumAddress().withMessage('Wallet must be a valid Ethereum address'),
+  body('email').optional({ checkFalsy: true }).isEmail().normalizeEmail().withMessage('Email must be a valid address'),
   async (req, res) => {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() })
 
-    const { aadhaarNumber, policyId, insuranceCompany, policyType, coverageAmount, expiryDate, walletAddress, contactNumber, notes } = req.body
+    const { aadhaarNumber, policyId, insuranceCompany, policyType, coverageAmount, expiryDate, walletAddress, contactNumber, email, notes } = req.body
+    if (aadhaarChecksumEnforced() && !isValidAadhaar(aadhaarNumber)) {
+      return res.status(400).json({ error: AADHAAR_INVALID_MESSAGE })
+    }
     try {
       const aadhaarHash = ethers.keccak256(ethers.toUtf8Bytes(aadhaarNumber))
 
@@ -56,13 +61,29 @@ router.post('/register',
         expiryDate: new Date(expiryDate),
         isPolicyActive: true,
         contactNumber: contactNumber || null,
+        email: email || null,
         walletAddress: walletAddress || null,
         enrolledBy: req.user._id,
         txHash,
         notes,
       })
 
-      res.json({ success: true, txHash, aadhaarHash, policyId })
+      // Surface consent-contact reuse at enrolment, not only when a claim is
+      // scored: a contact already held by policyholders on other policies means
+      // consent codes for unrelated people would reach one phone or inbox.
+      const warnings = []
+      const contactOr = []
+      if (email) contactOr.push({ email: String(email).toLowerCase() })
+      if (contactNumber) contactOr.push({ contactNumber })
+      if (contactOr.length) {
+        const shared = await EnrolledPatient.find({ aadhaarHash: { $ne: aadhaarHash }, $or: contactOr }).select('policyId').lean()
+        const otherPolicies = new Set(shared.filter(x => x.policyId !== policyId).map(x => x.policyId))
+        if (otherPolicies.size) {
+          warnings.push(`This consent contact is already registered to policyholders on ${otherPolicies.size} other polic${otherPolicies.size === 1 ? 'y' : 'ies'}. Claims for this patient will be flagged for review.`)
+        }
+      }
+
+      res.json({ success: true, txHash, aadhaarHash, policyId, warnings })
     } catch (err) {
       res.status(500).json({ error: err.message })
     }
@@ -135,6 +156,9 @@ router.post('/check',
         coverageAmount: record?.coverageAmount || null,
         expiryDate: record?.expiryDate || null,
         isPolicyActive: record?.isPolicyActive ?? null,
+        hasEnrolmentRecord: !!record,
+        contactNumber: record?.contactNumber || null,
+        email: record?.email || null,
       })
     } catch (err) {
       res.status(500).json({ error: err.message })
@@ -158,6 +182,32 @@ router.patch('/:aadhaarHash/wallet',
         { walletAddress: req.body.walletAddress }
       )
       res.json({ success: true, txHash })
+    } catch (err) {
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// PATCH /api/patients/:aadhaarHash/contact — update the consent contact details.
+// Enrolment used to be one-shot: a patient enrolled without an email, or whose
+// number later changed, could never receive consent codes again.
+router.patch('/:aadhaarHash/contact',
+  requireRole('admin'),
+  body('contactNumber').optional({ checkFalsy: true }).matches(/^\d{10}$/).withMessage('Contact number must be 10 digits'),
+  body('email').optional({ checkFalsy: true }).isEmail().normalizeEmail().withMessage('Email must be a valid address'),
+  async (req, res) => {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg })
+
+    try {
+      const update = {}
+      if (req.body.contactNumber !== undefined) update.contactNumber = req.body.contactNumber || null
+      if (req.body.email !== undefined) update.email = req.body.email || null
+      if (!Object.keys(update).length) return res.status(400).json({ error: 'Provide a contact number or email to update' })
+
+      const record = await EnrolledPatient.findOneAndUpdate({ aadhaarHash: req.params.aadhaarHash }, update, { new: true })
+      if (!record) return res.status(404).json({ error: 'No enrolment record for this patient' })
+      res.json({ success: true, contactNumber: record.contactNumber, email: record.email })
     } catch (err) {
       res.status(500).json({ error: err.message })
     }

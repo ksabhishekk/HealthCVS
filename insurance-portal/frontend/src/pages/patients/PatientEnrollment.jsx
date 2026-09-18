@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CheckCircle, AlertTriangle, Loader2, Search, UserPlus } from 'lucide-react'
-import { registerPatient, checkPatient } from '../../api/patients'
+import { registerPatient, checkPatient, updatePatientContact } from '../../api/patients'
+import { isValidAadhaar, AADHAAR_INVALID_MESSAGE } from '../../lib/aadhaar'
 import { useAuth } from '../../context/AuthContext'
 
 const shortenHash = (h) => h ? `${h.slice(0, 10)}…${h.slice(-8)}` : '—'
@@ -26,6 +27,7 @@ export default function PatientEnrollment() {
     aadhaarNumber: '',
     policyId: '',
     contactNumber: '',
+    email: '',
     insuranceCompany: '',
     policyType: '',
     coverageAmount: '',
@@ -36,6 +38,10 @@ export default function PatientEnrollment() {
   const [enrolling, setEnrolling] = useState(false)
   const [txHash, setTxHash] = useState(null)
   const [enrollError, setEnrollError] = useState('')
+  const [enrollWarnings, setEnrollWarnings] = useState([])
+  const [contactForm, setContactForm] = useState({ contactNumber: '', email: '' })
+  const [contactSaving, setContactSaving] = useState(false)
+  const [contactNotice, setContactNotice] = useState('')
 
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -51,6 +57,8 @@ export default function PatientEnrollment() {
     try {
       const { data } = await checkPatient(checkAadhaar)
       setCheckResult(data)
+      setContactForm({ contactNumber: data.contactNumber || '', email: data.email || '' })
+      setContactNotice('')
     } catch (err) {
       setCheckError(err.response?.data?.error || 'Check failed')
     } finally {
@@ -60,13 +68,19 @@ export default function PatientEnrollment() {
 
   const handleEnroll = async (e) => {
     e.preventDefault()
+    if (!isValidAadhaar(form.aadhaarNumber)) {
+      setEnrollError(AADHAAR_INVALID_MESSAGE)
+      return
+    }
+    setEnrollWarnings([])
     setEnrolling(true)
     setEnrollError('')
     setTxHash(null)
     try {
       const { data } = await registerPatient(form)
       setTxHash(data.txHash)
-      setForm({ aadhaarNumber: '', policyId: '', contactNumber: '', insuranceCompany: '', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '' })
+      setEnrollWarnings(data.warnings || [])
+      setForm({ aadhaarNumber: '', policyId: '', contactNumber: '', email: '', insuranceCompany: '', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '' })
     } catch (err) {
       const data = err.response?.data
       setEnrollError(data?.error || data?.errors?.[0]?.msg || err.message || 'Enrollment failed')
@@ -124,6 +138,34 @@ export default function PatientEnrollment() {
                 <div>Expiry: <span className="font-medium">{checkResult.expiryDate ? new Date(checkResult.expiryDate).toLocaleDateString('en-IN') : '—'}</span></div>
               </div>
             )}
+            {checkResult.isActive && checkResult.hasEnrolmentRecord && canEnroll && (
+              <div className="mt-4 pt-3 border-t border-green-200">
+                <p className="text-xs font-semibold text-gray-600 mb-2">Consent contact details (where claim-consent codes are sent)</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <input className="input text-sm" placeholder="10-digit mobile" value={contactForm.contactNumber}
+                    onChange={e => setContactForm(f => ({ ...f, contactNumber: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
+                  <input className="input text-sm" type="email" placeholder="Email for consent codes" value={contactForm.email}
+                    onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} />
+                </div>
+                <button type="button" className="btn-secondary mt-2 text-xs py-1.5" disabled={contactSaving}
+                  onClick={async () => {
+                    setContactSaving(true)
+                    setContactNotice('')
+                    setCheckError('')
+                    try {
+                      await updatePatientContact(checkResult.aadhaarHash, contactForm)
+                      setContactNotice('Consent contact details updated.')
+                    } catch (err) {
+                      setCheckError(err.response?.data?.error || 'Update failed')
+                    } finally {
+                      setContactSaving(false)
+                    }
+                  }}>
+                  {contactSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Update contact details
+                </button>
+                {contactNotice && <p className="text-xs text-green-700 mt-1.5">{contactNotice}</p>}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -151,6 +193,11 @@ export default function PatientEnrollment() {
             <span className="font-mono">{shortenHash(txHash)}</span>
           </div>
         )}
+        {enrollWarnings.map((w, i) => (
+          <div key={i} className="flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg mb-5 text-sm">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {w}
+          </div>
+        ))}
 
         {enrollError && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-5 text-sm">
@@ -172,6 +219,9 @@ export default function PatientEnrollment() {
                 maxLength={12} required disabled={!canEnroll}
               />
               <p className="text-xs text-gray-400 mt-1">Hashed with keccak256 before storing on-chain. Never stored in plain text.</p>
+              {form.aadhaarNumber.length === 12 && !isValidAadhaar(form.aadhaarNumber) && (
+                <p className="text-xs text-red-600 mt-1">{AADHAAR_INVALID_MESSAGE}</p>
+              )}
             </div>
           </div>
 
@@ -237,6 +287,19 @@ export default function PatientEnrollment() {
               <p className="text-xs text-gray-500 mt-1">
                 Claim-consent OTPs are sent here rather than to the number a hospital enters, so a
                 hospital cannot approve a claim on the patient's behalf.
+              </p>
+            </div>
+            <div>
+              <label className="label">Patient Email <span className="text-gray-400">(optional)</span></label>
+              <input type="email" className="input"
+                placeholder="Preferred channel for claim-consent codes"
+                value={form.email}
+                onChange={e => setField('email', e.target.value)}
+                disabled={!canEnroll}
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Used in preference to SMS: sending SMS to Indian numbers requires TRAI DLT
+                registration, which needs a registered business entity.
               </p>
             </div>
             <div>

@@ -83,45 +83,59 @@ const updateFraudScoreOnBlockchain = async (claimId, score) => {
   return { txHash: receipt.hash }
 }
 
-// TX5 — Automated adjudication (PM-JAY ceiling check runs inside the contract)
-const adjudicateClaimOnBlockchain = async (claimId) => {
+// TX5 — Automated adjudication. The contract checks each billed procedure
+// against its own PM-JAY ceiling, so it needs the line items; they come from
+// the claim's IPFS metadata and must add up exactly to the on-chain total.
+const adjudicateClaimOnBlockchain = async (claimId, itemisation) => {
   const { autoAdjudication } = getContracts()
   if (!autoAdjudication) throw new Error('AutoAdjudication contract not deployed')
-  const tx = await sendTx(autoAdjudication, 'adjudicateClaim', [BigInt(claimId)])
+  const codes = itemisation.map(i => i.code)
+  const amounts = itemisation.map(i => BigInt(i.amount))
+  const tx = await sendTx(autoAdjudication, 'adjudicateClaim', [BigInt(claimId), codes, amounts])
   const receipt = await tx.wait()
 
-  let approved = null, approvedAmount = null, reason = null
+  let approved = null, recommendedAmount = null, reason = null
   const iface = autoAdjudication.interface
   for (const log of receipt.logs) {
     try {
       const parsed = iface.parseLog(log)
       if (parsed?.name === 'ClaimAdjudicated') {
         approved = parsed.args.approved
-        approvedAmount = parsed.args.approvedAmount ? Number(parsed.args.approvedAmount) : null
+        recommendedAmount = Number(parsed.args.recommendedAmount)
         reason = parsed.args.reason
         break
       }
     } catch {}
   }
-  return { txHash: receipt.hash, approved, approvedAmount, reason }
+  return { txHash: receipt.hash, approved, recommendedAmount, reason }
 }
 
-// TX6 — Senior insurer manual review (approve or reject)
-const insurerReviewOnBlockchain = async (claimId, approve) => {
+// TX6 — Senior insurer review. approvedAmount may be less than claimed
+// (partial settlement); the contract refuses anything above the claimed amount.
+const insurerReviewOnBlockchain = async (claimId, approve, approvedAmount) => {
   const { autoAdjudication } = getContracts()
   if (!autoAdjudication) throw new Error('AutoAdjudication contract not deployed')
-  const tx = await sendTx(autoAdjudication, 'insurerReview', [BigInt(claimId), approve])
+  const amount = approve ? BigInt(Math.round(Number(approvedAmount) || 0)) : 0n
+  const tx = await sendTx(autoAdjudication, 'insurerReview', [BigInt(claimId), approve, amount])
   const receipt = await tx.wait()
-  return { txHash: receipt.hash, approved: approve }
+  return { txHash: receipt.hash, approved: approve, approvedAmount: Number(amount) }
 }
 
-// TX7 — Settle claim (triggers payment)
+// TX7 — Settle claim for the approved amount
 const settleClaimOnBlockchain = async (claimId) => {
   const { autoAdjudication } = getContracts()
   if (!autoAdjudication) throw new Error('AutoAdjudication contract not deployed')
   const tx = await sendTx(autoAdjudication, 'settleClaim', [BigInt(claimId)])
   const receipt = await tx.wait()
-  return { txHash: receipt.hash }
+
+  let amount = null
+  for (const log of receipt.logs) {
+    try {
+      const parsed = autoAdjudication.interface.parseLog(log)
+      if (parsed?.name === 'ClaimSettled') { amount = Number(parsed.args.amount); break }
+    } catch {}
+  }
+  return { txHash: receipt.hash, amount }
 }
 
 // Read helpers
@@ -136,6 +150,18 @@ const getAllClaimEvents = async () => {
   if (!claimSubmission) return []
   const filter = claimSubmission.filters.ClaimInitialized()
   return claimSubmission.queryFilter(filter, 0, 'latest')
+}
+
+// Claimed / recommended (TX5) / approved (TX6) amounts for a claim.
+const getSettlement = async (claimId) => {
+  const { autoAdjudication } = getContracts()
+  if (!autoAdjudication) return null
+  try {
+    const [claimed, recommended, approved] = await autoAdjudication.getSettlement(BigInt(claimId))
+    return { claimedAmount: Number(claimed), recommendedAmount: Number(recommended), approvedAmount: Number(approved) }
+  } catch {
+    return null  // a contract deployed before partial settlement existed
+  }
 }
 
 const isPatientActive = async (aadhaarHash) => {
@@ -155,4 +181,5 @@ module.exports = {
   getClaim,
   getAllClaimEvents,
   isPatientActive,
+  getSettlement,
 }

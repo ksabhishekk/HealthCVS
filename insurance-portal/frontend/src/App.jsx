@@ -9,6 +9,7 @@ import ClaimList from './pages/claims/ClaimList'
 import ClaimDetail from './pages/claims/ClaimDetail'
 import PatientEnrollment from './pages/patients/PatientEnrollment'
 import StaffList from './pages/staff/StaffList'
+import Hospitals from './pages/hospitals/Hospitals'
 
 function AppRoutes() {
   return (
@@ -24,6 +25,7 @@ function AppRoutes() {
         <Route path="/admin/staff" element={
           <ProtectedRoute adminOnly><StaffList /></ProtectedRoute>
         } />
+        <Route path="/hospitals" element={<Hospitals />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

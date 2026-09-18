@@ -43,6 +43,7 @@ router.post('/verify', requireApiKey, async (req, res) => {
       // insurer holds rather than the one a clerk typed. Knowing the number
       // does not let a clerk receive the SMS, so this is safe to share.
       contactNumber: record.contactNumber || null,
+      email: record.email || null,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })

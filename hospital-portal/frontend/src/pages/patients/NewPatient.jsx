@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, AlertCircle, CheckCircle } from 'lucide-react'
 import { createPatient } from '../../api/patients'
 import PageHeader from '../../components/PageHeader'
+import { isValidAadhaar, AADHAAR_INVALID_MESSAGE } from '../../lib/aadhaar'
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown']
 
@@ -28,6 +29,9 @@ export default function NewPatient() {
     setError('')
     if (form.aadhaarNumber.length !== 12) {
       return setError('Aadhaar must be exactly 12 digits')
+    }
+    if (!isValidAadhaar(form.aadhaarNumber)) {
+      return setError(AADHAAR_INVALID_MESSAGE)
     }
     setLoading(true)
     try {

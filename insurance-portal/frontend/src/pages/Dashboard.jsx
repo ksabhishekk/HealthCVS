@@ -1,7 +1,24 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { FileText, ArrowRight, UserPlus } from 'lucide-react'
-import { getClaimStats, getClaims } from '../api/claims'
+import { getClaimStats, getClaims, getSignalAnalytics } from '../api/claims'
+
+const SIGNAL_LABELS = {
+  doctor_unverified: 'Doctor not in NMC registry',
+  doctor_domain_mismatch: 'Doctor specialty does not fit diagnosis',
+  doctor_name_mismatch: 'Registration belongs to another doctor',
+  procedure_mismatch: 'Procedure does not fit diagnosis',
+  bill_not_medical: 'Bill is not a medical bill',
+  bill_overclaim: 'Claim exceeds billed total',
+  bill_mismatch: 'Bill name or dates disagree',
+  duplicate_documents: 'Same file in several slots',
+  document_slot_mismatch: 'Document in the wrong slot',
+  hospital_not_verified: 'Hospital identity not verified',
+  consent_contact_reused: 'Consent contact reused across policies',
+  doctor_track_record: 'Doctor’s past claims mostly rejected',
+  kyc_aadhaar_mismatch: 'ID document belongs to someone else',
+  kyc_pan_mismatch: 'PAN on ID does not match',
+}
 import StatsCard from '../components/StatsCard'
 import ClaimStatusBadge from '../components/ClaimStatusBadge'
 import { useAuth } from '../context/AuthContext'
@@ -15,12 +32,14 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null)
   const [recent, setRecent] = useState([])
   const [loading, setLoading] = useState(true)
+  const [signals, setSignals] = useState(null)
 
   useEffect(() => {
     Promise.all([
       getClaimStats().then(r => setStats(r.data)),
       getClaims().then(r => setRecent(r.data.claims?.slice(0, 8) || [])),
     ]).finally(() => setLoading(false))
+    getSignalAnalytics().then(r => setSignals(r.data)).catch(() => {})
   }, [])
 
   return (
@@ -52,6 +71,59 @@ export default function Dashboard() {
           <StatsCard label="Adjudicated"       value={stats.adjudicated}         color="yellow" />
         </div>
       )}
+
+      {/* Reviewer feedback loop */}
+      <div className="card mb-6">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-900">How reviewers responded to each check</h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            For every signal raised on a claim that has since been reviewed: how often the reviewer rejected it or
+            settled for less. A signal reviewers keep overriding is noise; one they agree with is earning its place.
+          </p>
+        </div>
+        {!signals || signals.reviewedClaims === 0 ? (
+          <div className="p-6 text-center text-sm text-gray-500">
+            No reviewed claims yet — this fills in as reviewers approve, partially approve or reject claims.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[13px] text-gray-500 border-b border-gray-100 bg-gray-50/50">
+                  <th className="px-5 py-3 font-medium">Signal</th>
+                  <th className="px-5 py-3 font-medium">Raised</th>
+                  <th className="px-5 py-3 font-medium">Rejected</th>
+                  <th className="px-5 py-3 font-medium">Partial</th>
+                  <th className="px-5 py-3 font-medium">Approved in full</th>
+                  <th className="px-5 py-3 font-medium">Reviewer agreement</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {signals.signals.map(x => (
+                  <tr key={x.signal}>
+                    <td className="px-5 py-3 text-gray-800">{SIGNAL_LABELS[x.signal] || x.signal}</td>
+                    <td className="px-5 py-3">{x.fired}</td>
+                    <td className="px-5 py-3 text-red-600">{x.rejected}</td>
+                    <td className="px-5 py-3 text-amber-600">{x.partial}</td>
+                    <td className="px-5 py-3 text-gray-600">{x.approved}</td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-24 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div className="h-1.5 bg-emerald-500 rounded-full" style={{ width: `${Math.round(x.agreementRate * 100)}%` }} />
+                        </div>
+                        <span className="text-xs text-gray-600">{Math.round(x.agreementRate * 100)}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="px-5 py-3 text-xs text-gray-500 border-t border-gray-100">
+              {signals.reviewedClaims} reviewed claim(s). Of {signals.cleanReviewed} with no findings, {signals.cleanApproved} were approved in full.
+            </p>
+          </div>
+        )}
+      </div>
 
       <div className="card">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">

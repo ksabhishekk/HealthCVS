@@ -5,7 +5,7 @@ import {
   Loader2, Bot, Gavel, BadgeCheck, Banknote, XCircle, ShieldAlert,
   TrendingUp, ChevronRight, MessageSquare, Cpu,
 } from 'lucide-react'
-import { getClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim, triggerOracle, getClaimXai } from '../../api/claims'
+import { getClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim, triggerOracle, getClaimXai, requestInfo } from '../../api/claims'
 import ClaimStatusBadge from '../../components/ClaimStatusBadge'
 import { useAuth } from '../../context/AuthContext'
 import XaiPanel from '../../components/XaiPanel'
@@ -132,6 +132,11 @@ export default function ClaimDetail() {
   const [reviewNotes, setReviewNotes] = useState('')
   const [xaiCid, setXaiCid] = useState(null)
   const [oraclePending, setOraclePending] = useState(false)
+  const [approvedAmount, setApprovedAmount] = useState('')
+  const [xaiBilledTotal, setXaiBilledTotal] = useState(null)
+  const [infoMessage, setInfoMessage] = useState('')
+  const [infoDocs, setInfoDocs] = useState([])
+  const [infoSending, setInfoSending] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -141,7 +146,10 @@ export default function ClaimDetail() {
   // Fetch XAI CID from MongoDB oracle record
   useEffect(() => {
     getClaimXai(id)
-      .then(r => { if (r.data?.xai?.xaiCid) setXaiCid(r.data.xai.xaiCid) })
+      .then(r => {
+        if (r.data?.xai?.xaiCid) setXaiCid(r.data.xai.xaiCid)
+        setXaiBilledTotal(r.data?.xai?.xaiData?.components?.billedTotal ?? null)
+      })
       .catch(() => {})
   }, [id])
 
@@ -250,6 +258,14 @@ export default function ClaimDetail() {
         </div>
       )}
       <TxBanner tx={lastTx} label={lastTxLabel} notes={lastTxNotes} />
+
+      {claim.settlement?.approvedAmount > 0 && (
+        <div className={`border px-4 py-3 rounded-lg mb-5 text-sm ${claim.settlement.approvedAmount < claim.settlement.claimedAmount ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+          <strong>{s === 5 ? 'Settled' : 'Approved'}:</strong> {fmt(claim.settlement.approvedAmount)} of {fmt(claim.settlement.claimedAmount)} claimed
+          {claim.settlement.approvedAmount < claim.settlement.claimedAmount && ' — partial settlement, recorded on-chain'}
+          {claim.settlement.recommendedAmount > 0 && ` · PM-JAY rate card supports ${fmt(claim.settlement.recommendedAmount)}`}
+        </div>
+      )}
 
       {/* Insurer Review Notes / Rejection Reason */}
       {claim.reviewNotes && (
@@ -363,14 +379,53 @@ export default function ClaimDetail() {
             />
           </div>
 
+          {(() => {
+            // Previously the only choices were approve-in-full or reject. The
+            // right response to an inflated claim is usually to settle the part
+            // that is supported, so suggest the amounts the evidence supports.
+            const claimed = claim.claimedAmount
+            const suggestions = [
+              claim.settlement?.recommendedAmount > 0 && claim.settlement.recommendedAmount < claimed && { label: 'PM-JAY ceiling', value: claim.settlement.recommendedAmount },
+              xaiBilledTotal > 0 && Math.round(xaiBilledTotal) < claimed && { label: 'Billed total', value: Math.round(xaiBilledTotal) },
+              { label: 'Full claim', value: claimed },
+            ].filter(Boolean)
+            const entered = Number(approvedAmount || claimed)
+            return (
+              <div className="mb-4">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+                  Amount to approve <span className="text-gray-400 font-normal normal-case">(approve less than claimed for a partial settlement)</span>
+                </label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="number" className="input w-44" min={1} max={claimed}
+                    placeholder={String(claimed)} value={approvedAmount}
+                    onChange={e => setApprovedAmount(e.target.value)} disabled={actionLoading}
+                  />
+                  {suggestions.map(sg => (
+                    <button key={sg.label} type="button" className="btn-secondary py-1 text-xs" disabled={actionLoading}
+                      onClick={() => setApprovedAmount(String(sg.value))}>
+                      {sg.label}: {fmt(sg.value)}
+                    </button>
+                  ))}
+                </div>
+                {entered > 0 && entered < claimed && (
+                  <p className="text-xs text-amber-700 mt-1.5">Partial settlement — {fmt(entered)} of {fmt(claimed)} claimed. The approved amount is recorded on-chain.</p>
+                )}
+                {entered > claimed && (
+                  <p className="text-xs text-red-600 mt-1.5">You cannot approve more than the claimed {fmt(claimed)}.</p>
+                )}
+              </div>
+            )
+          })()}
+
           <div className="flex items-center gap-3">
             <button
               className="btn-primary flex-1 justify-center py-2.5"
               disabled={actionLoading}
-              onClick={() => runAction('Approved by insurer', () => insurerReview(id, true, reviewNotes))}
+              onClick={() => runAction('Approved by insurer', () => insurerReview(id, true, reviewNotes, Number(approvedAmount || claim.claimedAmount)))}
             >
               {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <BadgeCheck className="w-4 h-4" />}
-              {actionLoading ? 'Processing…' : 'Approve Claim (TX6)'}
+              {actionLoading ? 'Processing…' : (Number(approvedAmount) > 0 && Number(approvedAmount) < claim.claimedAmount ? 'Approve Partially (TX6)' : 'Approve Claim (TX6)')}
             </button>
             <button
               className="btn-secondary text-red-600 border-red-200 hover:bg-red-50 flex-1 justify-center py-2.5"
@@ -381,6 +436,86 @@ export default function ClaimDetail() {
               {actionLoading ? 'Processing…' : 'Reject Claim (TX6)'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── Requests for more information ───────────────────────────────────── */}
+      {((canTx6 && s >= 1 && s !== 5 && s !== 7) || (claim.infoRequests || []).length > 0) && (
+        <div className="card p-5 mb-5">
+          <div className="flex items-center gap-2 mb-1">
+            <MessageSquare className="w-4 h-4 text-blue-500" />
+            <h2 className="font-semibold text-gray-900">Requests for more information</h2>
+          </div>
+          <p className="text-xs text-gray-500 mb-4">
+            Ask the hospital for what you need before deciding — a legible bill, the actual treating doctor, a missing
+            document. Their answer appears here.
+          </p>
+
+          {(claim.infoRequests || []).map((r) => (
+            <div key={r._id} className={`rounded-lg border px-3 py-2 mb-2 text-sm ${r.status === 'open' ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium text-gray-800">{r.message}</span>
+                <span className={`badge shrink-0 ${r.status === 'open' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                  {r.status === 'open' ? 'Awaiting hospital' : 'Answered'}
+                </span>
+              </div>
+              {r.requestedDocuments?.length > 0 && (
+                <p className="text-xs text-gray-500 mt-0.5">Requested: {r.requestedDocuments.map(d => DOC_LABELS[d] || d).join(', ')}</p>
+              )}
+              <p className="text-xs text-gray-400 mt-0.5">Asked by {r.requestedByName || 'insurer'} · {fmtTs(r.requestedAt)}</p>
+              {r.status === 'responded' && (
+                <div className="mt-2 border-t border-green-200 pt-2">
+                  <p className="text-xs text-gray-800 whitespace-pre-wrap">{r.response}</p>
+                  {r.responseDocuments?.map((d, i) => (
+                    <a key={i} href={ipfsUrl(d.cid)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-emerald-700 hover:underline mr-3 mt-1">
+                      <ExternalLink className="w-3 h-3" /> {d.name}
+                    </a>
+                  ))}
+                  <p className="text-xs text-gray-400 mt-0.5">Answered by {r.respondedByName} · {fmtTs(r.respondedAt)}</p>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {canTx6 && s !== 5 && s !== 7 && (
+            <div className="mt-3">
+              <textarea
+                className="input resize-none h-16 text-sm"
+                placeholder="e.g. The bill is unreadable — please upload a legible itemised bill."
+                value={infoMessage} onChange={e => setInfoMessage(e.target.value)} disabled={infoSending}
+              />
+              <div className="flex flex-wrap gap-3 mt-2">
+                {['hospital_bill', 'insurance_card', 'patient_kyc', 'consultation_papers', 'investigation_reports'].map(t => (
+                  <label key={t} className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                    <input type="checkbox" checked={infoDocs.includes(t)}
+                      onChange={e => setInfoDocs(d => e.target.checked ? [...d, t] : d.filter(x => x !== t))} />
+                    {DOC_LABELS[t]}
+                  </label>
+                ))}
+              </div>
+              <button
+                className="btn-secondary mt-3"
+                disabled={infoSending || !infoMessage.trim()}
+                onClick={async () => {
+                  setInfoSending(true)
+                  setError('')
+                  try {
+                    await requestInfo(id, infoMessage, infoDocs)
+                    setInfoMessage('')
+                    setInfoDocs([])
+                    load()
+                  } catch (e) {
+                    setError(e.response?.data?.error || 'Could not send the request')
+                  } finally {
+                    setInfoSending(false)
+                  }
+                }}
+              >
+                {infoSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageSquare className="w-4 h-4" />}
+                Ask the hospital
+              </button>
+            </div>
+          )}
         </div>
       )}
 
