@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import ClaimList from './pages/claims/ClaimList'
 import ClaimDetail from './pages/claims/ClaimDetail'
 import PatientEnrollment from './pages/patients/PatientEnrollment'
+import PolicyholderList from './pages/patients/PolicyholderList'
 import StaffList from './pages/staff/StaffList'
 import Hospitals from './pages/hospitals/Hospitals'
 
@@ -22,6 +23,9 @@ function AppRoutes() {
         <Route path="/claims" element={<ClaimList />} />
         <Route path="/claims/:id" element={<ClaimDetail />} />
         <Route path="/patients/enroll" element={<PatientEnrollment />} />
+        <Route path="/patients" element={
+          <ProtectedRoute adminOnly><PolicyholderList /></ProtectedRoute>
+        } />
         <Route path="/admin/staff" element={
           <ProtectedRoute adminOnly><StaffList /></ProtectedRoute>
         } />

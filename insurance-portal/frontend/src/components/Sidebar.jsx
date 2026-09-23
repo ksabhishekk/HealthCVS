@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, FileText, UserPlus, UserCog,
-  LogOut, ShieldCheck, Building2,
+  LogOut, ShieldCheck, Building2, Users,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -20,6 +20,7 @@ const baseNav = [
 
 const adminNav = [
   ...baseNav,
+  { to: '/patients', icon: Users, label: 'Policyholders' },
   { to: '/admin/staff', icon: UserCog, label: 'Staff' },
 ]
 

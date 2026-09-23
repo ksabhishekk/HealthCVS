@@ -9,6 +9,67 @@ const { isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE } = req
 const router = express.Router()
 router.use(authenticate)
 
+// GET /api/patients — list all enrolled policyholders (admin only)
+router.get('/',
+  requireRole('admin'),
+  async (req, res) => {
+    try {
+      const { search, status, type, page = 1, limit = 20 } = req.query
+      const filter = {}
+      if (status === 'active')   filter.isPolicyActive = true
+      if (status === 'inactive') filter.isPolicyActive = false
+      if (type) filter.policyType = type
+      if (search) filter.$or = [
+        { policyId: { $regex: search, $options: 'i' } },
+        { insuranceCompany: { $regex: search, $options: 'i' } },
+        { notes: { $regex: search, $options: 'i' } },
+      ]
+      const skip = (Number(page) - 1) * Number(limit)
+      const [patients, total] = await Promise.all([
+        EnrolledPatient.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(Number(limit))
+          .populate('enrolledBy', 'name')
+          .lean(),
+        EnrolledPatient.countDocuments(filter),
+      ])
+      res.json({ patients, total, page: Number(page), pages: Math.ceil(total / Number(limit)) })
+    } catch (err) {
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// PATCH /api/patients/:aadhaarHash/policy — update policy details (admin only)
+router.patch('/:aadhaarHash/policy',
+  requireRole('admin'),
+  body('isPolicyActive').optional().isBoolean(),
+  body('expiryDate').optional().isISO8601(),
+  body('coverageAmount').optional().isFloat({ min: 1 }),
+  body('policyType').optional().isIn(['individual', 'family_floater', 'corporate', 'government']),
+  body('contactNumber').optional({ checkFalsy: true }).matches(/^\d{10}$/),
+  body('email').optional({ checkFalsy: true }).isEmail().normalizeEmail(),
+  body('notes').optional(),
+  async (req, res) => {
+    const errors = validationResult(req)
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg })
+    try {
+      const allowed = ['isPolicyActive', 'expiryDate', 'coverageAmount', 'policyType', 'contactNumber', 'email', 'notes']
+      const update = {}
+      allowed.forEach(k => { if (req.body[k] !== undefined) update[k] = req.body[k] })
+      if (!Object.keys(update).length) return res.status(400).json({ error: 'No valid fields to update' })
+      const record = await EnrolledPatient.findOneAndUpdate(
+        { aadhaarHash: req.params.aadhaarHash }, update, { new: true }
+      )
+      if (!record) return res.status(404).json({ error: 'Patient not found' })
+      res.json({ success: true, patient: record })
+    } catch (err) {
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
 // POST /api/patients/register — TX1: enroll policyholder on blockchain + save policy to MongoDB
 router.post('/register',
   requireRole('admin'),
