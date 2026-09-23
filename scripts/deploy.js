@@ -18,7 +18,7 @@
 const { ethers, network } = require("hardhat");
 
 async function main() {
-  const [deployer] = await ethers.getSigners();
+  const [deployer, account1] = await ethers.getSigners();
   // On local Hardhat network, always deploy fresh — .env addresses are for Amoy only
   const isLocal = network.name === "hardhat" || network.name === "localhost";
 
@@ -99,6 +99,12 @@ async function main() {
     await (await roleManager.grantInsurer(deployer.address)).wait();
     await (await roleManager.grantHospitalClerk(deployer.address)).wait();
     await (await roleManager.grantDoctor(deployer.address)).wait();
+    
+    if (isLocal && account1) {
+      await (await roleManager.grantInsurer(account1.address)).wait();
+      console.log(`✓ Granted Insurer role to Account #2 (${account1.address})`);
+    }
+
     // AutoAdjudication calls claimSubmission.updateClaimStatus() — its contract
     // address must have INSURER_ROLE so the cross-contract call is authorized.
     await (await roleManager.grantInsurer(autoAdjudicationAddress)).wait();
