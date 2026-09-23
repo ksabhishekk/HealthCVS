@@ -41,7 +41,7 @@ export default function Sidebar() {
             <ShieldCheck className="w-4.5 h-4.5 text-white" />
           </div>
           <div>
-            <div className="font-bold text-[15px] text-gray-900 leading-tight">Star Health</div>
+            <div className="font-bold text-[15px] text-gray-900 leading-tight">HealthCVS Insurance Portal</div>
             <div className="text-xs text-gray-500 font-medium">HealthCVS Portal</div>
           </div>
         </div>

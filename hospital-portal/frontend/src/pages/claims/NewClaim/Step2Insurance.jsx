@@ -12,8 +12,8 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
   const [verifyError, setVerifyError] = useState('')
 
   const handleVerify = async () => {
-    if (!ins.company || !ins.policyNumber) {
-      setVerifyError('Enter insurance company and policy number first')
+    if (!ins.policyNumber) {
+      setVerifyError('Enter policy number first')
       return
     }
     setVerifying(true)
@@ -24,7 +24,7 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
         aadhaarHash: data.aadhaarHash || undefined,
         aadhaarNumber: data.aadhaarNumber || undefined,
         policyId: ins.policyNumber,
-        insuranceCompany: ins.company,
+        insuranceCompany: 'HealthCVS Insurance Portal',
       })
       if (result.valid) {
         update({
@@ -51,7 +51,7 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
     }
   }
 
-  const canProceed = ins.company && ins.policyNumber && ins.policyType &&
+  const canProceed = ins.policyNumber && ins.policyType &&
     (!ins.isProposerDifferent || ins.proposerName) &&
     (ins.policyType !== 'corporate' || ins.employeeId)
 
@@ -60,12 +60,7 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
       <div className="card p-5">
         <h3 className="font-semibold text-gray-900 mb-4">Insurance Policy Details</h3>
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="label">Insurance Company <span className="text-red-500">*</span></label>
-            <input className="input" value={ins.company}
-              onChange={e => update({ insurance: { ...ins, company: e.target.value, _verified: false } })}
-              placeholder="e.g. Star Health, HDFC ERGO" />
-          </div>
+
           <div>
             <label className="label">Policy Number <span className="text-red-500">*</span></label>
             <input className="input font-mono" value={ins.policyNumber}
@@ -92,7 +87,7 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
             <button
               type="button"
               onClick={handleVerify}
-              disabled={verifying || !ins.company || !ins.policyNumber}
+              disabled={verifying || !ins.policyNumber}
               className="btn-secondary py-1.5 text-xs"
             >
               {verifying ? <><Loader2 className="w-3 h-3 animate-spin" /> Verifying…</> : 'Verify with Insurer'}

@@ -28,7 +28,7 @@ export default function PatientEnrollment() {
     policyId: '',
     contactNumber: '',
     email: '',
-    insuranceCompany: '',
+    insuranceCompany: 'HealthCVS Insurance Portal',
     policyType: '',
     coverageAmount: '',
     expiryDate: '',
@@ -227,19 +227,10 @@ export default function PatientEnrollment() {
 
           {/* Policy details */}
           <div className="grid grid-cols-2 gap-4 pt-3 border-t">
-            <div className="col-span-2">
-              <label className="label">Insurance Company <span className="text-red-500">*</span></label>
-              <input type="text" className="input"
-                placeholder="e.g. Star Health Insurance"
-                value={form.insuranceCompany}
-                onChange={e => setField('insuranceCompany', e.target.value)}
-                required disabled={!canEnroll}
-              />
-            </div>
             <div>
               <label className="label">Policy ID <span className="text-red-500">*</span></label>
               <input type="text" className="input"
-                placeholder="e.g. SHI-2024-001234"
+                placeholder="e.g. HCVS-2024-IND-1234567"
                 value={form.policyId}
                 onChange={e => setField('policyId', e.target.value)}
                 required disabled={!canEnroll}

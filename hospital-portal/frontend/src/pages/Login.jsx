@@ -55,7 +55,7 @@ export default function Login() {
             Blockchain-verified<br />insurance claims
           </h1>
           <p className="text-blue-800/70 text-[15px] leading-relaxed mb-8 max-w-sm">
-            City General Hospital's secure claim management platform. Every transaction is signed,
+            XYZ Hospital's secure claim management platform. Every transaction is signed,
             timestamped, and recorded on-chain — tamper-proof by design.
           </p>
 
