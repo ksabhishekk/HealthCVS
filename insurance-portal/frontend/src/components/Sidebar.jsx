@@ -6,9 +6,9 @@ import {
 import { useAuth } from '../context/AuthContext'
 
 const ROLE_LABELS = {
-  admin:    'Administrator',
+  admin: 'Administrator',
   reviewer: 'Senior Reviewer',
-  finance:  'Finance Officer',
+  finance: 'Finance Officer',
 }
 
 const baseNav = [
@@ -41,7 +41,7 @@ export default function Sidebar() {
             <ShieldCheck className="w-4.5 h-4.5 text-white" />
           </div>
           <div>
-            <div className="font-bold text-[15px] text-gray-900 leading-tight">HealthCVS Insurance Portal</div>
+            <div className="font-bold text-[15px] text-gray-900 leading-tight">Star Health</div>
             <div className="text-xs text-gray-500 font-medium">HealthCVS Portal</div>
           </div>
         </div>
@@ -56,10 +56,9 @@ export default function Sidebar() {
               to={to}
               end={to === '/dashboard'}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-xl text-[14px] font-medium transition-all ${
-                  isActive
-                    ? 'bg-emerald-50 text-emerald-700'
-                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                `flex items-center gap-3 px-3 py-2.5 rounded-xl text-[14px] font-medium transition-all ${isActive
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                 }`
               }
             >

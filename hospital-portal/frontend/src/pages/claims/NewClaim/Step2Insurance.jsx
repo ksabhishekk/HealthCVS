@@ -24,7 +24,7 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
         aadhaarHash: data.aadhaarHash || undefined,
         aadhaarNumber: data.aadhaarNumber || undefined,
         policyId: ins.policyNumber,
-        insuranceCompany: 'HealthCVS Insurance Portal',
+        insuranceCompany: 'Star Health',
       })
       if (result.valid) {
         update({

@@ -1,5 +1,5 @@
 // Run: node scripts/seedCatalog.js
-// Seeds sample doctors and procedures for XYZ Hospital
+// Seeds sample doctors and procedures for City General Hospital
 const dns = require('node:dns')
 dns.setServers(['8.8.8.8', '1.1.1.1'])
 require('dotenv').config()

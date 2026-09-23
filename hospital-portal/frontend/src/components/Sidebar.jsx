@@ -37,7 +37,7 @@ export default function Sidebar() {
           </div>
           <div className="min-w-0">
             <div className="font-bold text-[15px] text-gray-900 leading-tight">HealthCVS</div>
-            <div className="text-xs text-gray-500 font-medium truncate">XYZ Hospital</div>
+            <div className="text-xs text-gray-500 font-medium truncate">City General Hospital</div>
           </div>
         </div>
       </div>

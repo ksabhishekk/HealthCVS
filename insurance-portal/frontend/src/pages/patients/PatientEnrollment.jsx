@@ -28,7 +28,7 @@ export default function PatientEnrollment() {
     policyId: '',
     contactNumber: '',
     email: '',
-    insuranceCompany: 'HealthCVS Insurance Portal',
+    insuranceCompany: 'Star Health',
     policyType: '',
     coverageAmount: '',
     expiryDate: '',
@@ -80,7 +80,7 @@ export default function PatientEnrollment() {
       const { data } = await registerPatient(form)
       setTxHash(data.txHash)
       setEnrollWarnings(data.warnings || [])
-      setForm({ aadhaarNumber: '', policyId: '', contactNumber: '', email: '', insuranceCompany: '', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '' })
+      setForm({ aadhaarNumber: '', policyId: '', contactNumber: '', email: '', insuranceCompany: 'Star Health', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '' })
     } catch (err) {
       const data = err.response?.data
       setEnrollError(data?.error || data?.errors?.[0]?.msg || err.message || 'Enrollment failed')
@@ -90,38 +90,41 @@ export default function PatientEnrollment() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-gray-900">Patient Enrollment</h1>
-        <p className="text-sm text-gray-500 mt-0.5">TX1 — Register policyholder on blockchain (PatientRegistry)</p>
+    <div className="w-full">
+      {/* Page header */}
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900">Patient Enrollment</h1>
+        <p className="text-sm text-gray-500 mt-1">TX1 — Register policyholder on blockchain (PatientRegistry)</p>
       </div>
 
-      {/* Check status */}
+      {/* Top row: check status (full width) */}
       <div className="card p-6 mb-6">
         <h2 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
           <Search className="w-4 h-4 text-gray-500" />
           Check Registration Status
         </h2>
-        <form onSubmit={handleCheck} className="flex gap-3">
-          <input
-            type="text"
-            className="input flex-1"
-            placeholder="12-digit Aadhaar number"
-            value={checkAadhaar}
-            onChange={e => setCheckAadhaar(e.target.value.replace(/\D/g, '').slice(0, 12))}
-            maxLength={12}
-          />
-          <button type="submit" className="btn-secondary" disabled={checking}>
-            {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Check'}
-          </button>
-        </form>
+        <div className="flex gap-3 max-w-xl">
+          <form onSubmit={handleCheck} className="flex gap-3 flex-1">
+            <input
+              type="text"
+              className="input flex-1"
+              placeholder="Enter 12-digit Aadhaar number"
+              value={checkAadhaar}
+              onChange={e => setCheckAadhaar(e.target.value.replace(/\D/g, '').slice(0, 12))}
+              maxLength={12}
+            />
+            <button type="submit" className="btn-secondary" disabled={checking}>
+              {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Check'}
+            </button>
+          </form>
+        </div>
         {checkError && (
           <div className="flex items-center gap-2 text-red-600 text-sm mt-3">
             <AlertTriangle className="w-4 h-4" /> {checkError}
           </div>
         )}
         {checkResult && (
-          <div className={`mt-4 p-4 rounded-lg border ${checkResult.isActive ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
+          <div className={`mt-4 p-4 rounded-lg border max-w-2xl ${checkResult.isActive ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
             <div className="flex items-center gap-2 text-sm font-medium mb-2">
               {checkResult.isActive
                 ? <><CheckCircle className="w-4 h-4 text-green-600" /> <span className="text-green-700">Registered and active</span></>
@@ -129,10 +132,9 @@ export default function PatientEnrollment() {
               }
             </div>
             {checkResult.isActive && (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-gray-600 mt-2">
+              <div className="grid grid-cols-3 gap-x-6 gap-y-1 text-xs text-gray-600 mt-2">
                 <div>Hash: <span className="font-mono">{shortenHash(checkResult.aadhaarHash)}</span></div>
                 <div>Policy ID: <span className="font-medium">{checkResult.policyId || '—'}</span></div>
-                <div>Company: <span className="font-medium">{checkResult.insuranceCompany || '—'}</span></div>
                 <div>Type: <span className="font-medium capitalize">{checkResult.policyType?.replace('_', ' ') || '—'}</span></div>
                 <div>Coverage: <span className="font-medium">{fmt(checkResult.coverageAmount)}</span></div>
                 <div>Expiry: <span className="font-medium">{checkResult.expiryDate ? new Date(checkResult.expiryDate).toLocaleDateString('en-IN') : '—'}</span></div>
@@ -140,11 +142,11 @@ export default function PatientEnrollment() {
             )}
             {checkResult.isActive && checkResult.hasEnrolmentRecord && canEnroll && (
               <div className="mt-4 pt-3 border-t border-green-200">
-                <p className="text-xs font-semibold text-gray-600 mb-2">Consent contact details (where claim-consent codes are sent)</p>
-                <div className="grid grid-cols-2 gap-3">
+                <p className="text-xs font-semibold text-gray-600 mb-2">Update consent contact details</p>
+                <div className="grid grid-cols-2 gap-3 max-w-md">
                   <input className="input text-sm" placeholder="10-digit mobile" value={contactForm.contactNumber}
                     onChange={e => setContactForm(f => ({ ...f, contactNumber: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
-                  <input className="input text-sm" type="email" placeholder="Email for consent codes" value={contactForm.email}
+                  <input className="input text-sm" type="email" placeholder="Email" value={contactForm.email}
                     onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} />
                 </div>
                 <button type="button" className="btn-secondary mt-2 text-xs py-1.5" disabled={contactSaving}
@@ -154,14 +156,14 @@ export default function PatientEnrollment() {
                     setCheckError('')
                     try {
                       await updatePatientContact(checkResult.aadhaarHash, contactForm)
-                      setContactNotice('Consent contact details updated.')
+                      setContactNotice('Contact details updated.')
                     } catch (err) {
                       setCheckError(err.response?.data?.error || 'Update failed')
                     } finally {
                       setContactSaving(false)
                     }
                   }}>
-                  {contactSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Update contact details
+                  {contactSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Update
                 </button>
                 {contactNotice && <p className="text-xs text-green-700 mt-1.5">{contactNotice}</p>}
               </div>
@@ -170,27 +172,29 @@ export default function PatientEnrollment() {
         )}
       </div>
 
-      {/* Enroll form */}
+      {/* Enroll form (full width) */}
       <div className="card p-6">
-        <h2 className="font-semibold text-gray-900 mb-1 flex items-center gap-2">
-          <UserPlus className="w-4 h-4 text-gray-500" />
-          Register New Policyholder
-        </h2>
-        <p className="text-xs text-gray-500 mb-5">
-          Writes TX1 on-chain. Policy details are stored in insurer database — not on-chain (cost + privacy).
-        </p>
-
-        {!canEnroll && (
-          <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg text-sm mb-4">
-            Only <strong>Admin</strong> can enroll patients.
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+              <UserPlus className="w-4 h-4 text-gray-500" />
+              Register New Policyholder
+            </h2>
+            <p className="text-xs text-gray-500 mt-1">
+              Writes TX1 on-chain. Policy details are stored in insurer database — not on-chain (cost + privacy).
+            </p>
           </div>
-        )}
+          {!canEnroll && (
+            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-3 py-2 rounded-lg text-xs">
+              Only <strong>Admin</strong> can enroll patients.
+            </div>
+          )}
+        </div>
 
         {txHash && (
           <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg mb-5 text-sm">
             <CheckCircle className="w-4 h-4 shrink-0" />
-            Patient enrolled! TX:{' '}
-            <span className="font-mono">{shortenHash(txHash)}</span>
+            Patient enrolled! TX: <span className="font-mono">{shortenHash(txHash)}</span>
           </div>
         )}
         {enrollWarnings.map((w, i) => (
@@ -198,132 +202,134 @@ export default function PatientEnrollment() {
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {w}
           </div>
         ))}
-
         {enrollError && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-5 text-sm">
-            <AlertTriangle className="w-4 h-4" />
-            {enrollError}
+            <AlertTriangle className="w-4 h-4" /> {enrollError}
           </div>
         )}
 
-        <form onSubmit={handleEnroll} className="space-y-4">
-          {/* Identity */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className="label">Aadhaar Number <span className="text-red-500">*</span></label>
-              <input
-                type="text" className="input font-mono"
-                placeholder="12-digit Aadhaar number"
-                value={form.aadhaarNumber}
-                onChange={e => setField('aadhaarNumber', e.target.value.replace(/\D/g, '').slice(0, 12))}
-                maxLength={12} required disabled={!canEnroll}
-              />
-              <p className="text-xs text-gray-400 mt-1">Hashed with keccak256 before storing on-chain. Never stored in plain text.</p>
-              {form.aadhaarNumber.length === 12 && !isValidAadhaar(form.aadhaarNumber) && (
-                <p className="text-xs text-red-600 mt-1">{AADHAAR_INVALID_MESSAGE}</p>
+        <form onSubmit={handleEnroll}>
+          {/* Section 1: Identity */}
+          <div className="mb-6">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Policyholder Identity</h3>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="col-span-2">
+                <label className="label">Aadhaar Number <span className="text-red-500">*</span></label>
+                <input
+                  type="text" className="input font-mono"
+                  placeholder="12-digit Aadhaar number"
+                  value={form.aadhaarNumber}
+                  onChange={e => setField('aadhaarNumber', e.target.value.replace(/\D/g, '').slice(0, 12))}
+                  maxLength={12} required disabled={!canEnroll}
+                />
+                <p className="text-xs text-gray-400 mt-1">Hashed with keccak256 before storing on-chain. Never stored in plain text.</p>
+                {form.aadhaarNumber.length === 12 && !isValidAadhaar(form.aadhaarNumber) && (
+                  <p className="text-xs text-red-600 mt-1">{AADHAAR_INVALID_MESSAGE}</p>
+                )}
+              </div>
+              <div>
+                <label className="label">Wallet Address <span className="text-gray-400">(optional)</span></label>
+                <input type="text" className="input font-mono"
+                  placeholder="0x… (can be assigned later)"
+                  value={form.walletAddress}
+                  onChange={e => setField('walletAddress', e.target.value)}
+                  disabled={!canEnroll}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Policy details */}
+          <div className="mb-6 pt-6 border-t border-gray-100">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Policy Details</h3>
+            <div className="grid grid-cols-4 gap-4">
+              <div className="col-span-2">
+                <label className="label">Policy ID <span className="text-red-500">*</span></label>
+                <input type="text" className="input"
+                  placeholder="e.g. SHI-x-xxxx-xxxxxx"
+                  value={form.policyId}
+                  onChange={e => setField('policyId', e.target.value)}
+                  required disabled={!canEnroll}
+                />
+              </div>
+              <div>
+                <label className="label">Policy Type <span className="text-red-500">*</span></label>
+                <select className="input" value={form.policyType}
+                  onChange={e => setField('policyType', e.target.value)}
+                  required disabled={!canEnroll}>
+                  <option value="">Select type…</option>
+                  {POLICY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="label">Policy Expiry Date <span className="text-red-500">*</span></label>
+                <input type="date" className="input"
+                  value={form.expiryDate}
+                  onChange={e => setField('expiryDate', e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  required disabled={!canEnroll}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="label">Coverage Amount (₹) <span className="text-red-500">*</span></label>
+                <input type="number" className="input"
+                  value={form.coverageAmount}
+                  onChange={e => setField('coverageAmount', e.target.value)}
+                  min={1} required disabled={!canEnroll}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Contact */}
+          <div className="mb-6 pt-6 border-t border-gray-100">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Consent & Contact</h3>
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="label">Contact Number <span className="text-gray-400">(10 digits)</span></label>
+                <input type="tel" className="input"
+                  placeholder="Used to send claim-consent OTPs"
+                  value={form.contactNumber}
+                  onChange={e => setField('contactNumber', e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  disabled={!canEnroll}
+                />
+                <p className="text-xs text-gray-400 mt-1">OTPs are sent here — hospitals cannot approve on patient's behalf.</p>
+              </div>
+              <div>
+                <label className="label">Email <span className="text-gray-400">(optional)</span></label>
+                <input type="email" className="input"
+                  placeholder="Preferred channel for consent codes"
+                  value={form.email}
+                  onChange={e => setField('email', e.target.value)}
+                  disabled={!canEnroll}
+                />
+                <p className="text-xs text-gray-400 mt-1">Email preferred over SMS (TRAI DLT registration required for SMS).</p>
+              </div>
+              <div>
+                <label className="label">Notes <span className="text-gray-400">(internal)</span></label>
+                <input type="text" className="input"
+                  placeholder="Any internal notes"
+                  value={form.notes}
+                  onChange={e => setField('notes', e.target.value)}
+                  disabled={!canEnroll}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-gray-100">
+            <button
+              type="submit"
+              className="btn-primary px-8 py-2.5"
+              disabled={enrolling || !canEnroll}
+            >
+              {enrolling ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Submitting TX1 to blockchain…</>
+              ) : (
+                <><UserPlus className="w-4 h-4" /> Enroll Policyholder (TX1)</>
               )}
-            </div>
+            </button>
           </div>
-
-          {/* Policy details */}
-          <div className="grid grid-cols-2 gap-4 pt-3 border-t">
-            <div>
-              <label className="label">Policy ID <span className="text-red-500">*</span></label>
-              <input type="text" className="input"
-                placeholder="e.g. HCVS-2024-IND-1234567"
-                value={form.policyId}
-                onChange={e => setField('policyId', e.target.value)}
-                required disabled={!canEnroll}
-              />
-            </div>
-            <div>
-              <label className="label">Policy Type <span className="text-red-500">*</span></label>
-              <select className="input" value={form.policyType}
-                onChange={e => setField('policyType', e.target.value)}
-                required disabled={!canEnroll}>
-                <option value="">Select type…</option>
-                {POLICY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Coverage Amount (₹) <span className="text-red-500">*</span></label>
-              <input type="number" className="input"
-                placeholder="e.g. 500000"
-                value={form.coverageAmount}
-                onChange={e => setField('coverageAmount', e.target.value)}
-                min={1} required disabled={!canEnroll}
-              />
-            </div>
-            <div>
-              <label className="label">Policy Expiry Date <span className="text-red-500">*</span></label>
-              <input type="date" className="input"
-                value={form.expiryDate}
-                onChange={e => setField('expiryDate', e.target.value)}
-                min={new Date().toISOString().split('T')[0]}
-                required disabled={!canEnroll}
-              />
-            </div>
-          </div>
-
-          {/* Optional */}
-          <div className="grid grid-cols-1 gap-4 pt-3 border-t">
-            <div>
-              <label className="label">Patient Contact Number <span className="text-gray-400">(10 digits)</span></label>
-              <input type="tel" className="input"
-                placeholder="Used to send claim-consent OTPs"
-                value={form.contactNumber}
-                onChange={e => setField('contactNumber', e.target.value.replace(/\D/g, '').slice(0, 10))}
-                disabled={!canEnroll}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Claim-consent OTPs are sent here rather than to the number a hospital enters, so a
-                hospital cannot approve a claim on the patient's behalf.
-              </p>
-            </div>
-            <div>
-              <label className="label">Patient Email <span className="text-gray-400">(optional)</span></label>
-              <input type="email" className="input"
-                placeholder="Preferred channel for claim-consent codes"
-                value={form.email}
-                onChange={e => setField('email', e.target.value)}
-                disabled={!canEnroll}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Used in preference to SMS: sending SMS to Indian numbers requires TRAI DLT
-                registration, which needs a registered business entity.
-              </p>
-            </div>
-            <div>
-              <label className="label">Patient Wallet Address <span className="text-gray-400">(optional)</span></label>
-              <input type="text" className="input font-mono"
-                placeholder="0x… (can be assigned later)"
-                value={form.walletAddress}
-                onChange={e => setField('walletAddress', e.target.value)}
-                disabled={!canEnroll}
-              />
-            </div>
-            <div>
-              <label className="label">Notes <span className="text-gray-400">(internal)</span></label>
-              <input type="text" className="input"
-                placeholder="Any internal notes"
-                value={form.notes}
-                onChange={e => setField('notes', e.target.value)}
-                disabled={!canEnroll}
-              />
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="btn-primary w-full justify-center py-2.5"
-            disabled={enrolling || !canEnroll}
-          >
-            {enrolling ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Submitting TX1 to blockchain…</>
-            ) : (
-              <><UserPlus className="w-4 h-4" /> Enroll Patient (TX1)</>
-            )}
-          </button>
         </form>
       </div>
     </div>

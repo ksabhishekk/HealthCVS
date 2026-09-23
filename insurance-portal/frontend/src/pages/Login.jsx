@@ -46,7 +46,7 @@ export default function Login() {
             <ShieldCheck className="w-5 h-5 text-white" />
           </div>
           <div>
-            <div className="text-emerald-900 font-bold text-sm leading-tight">HealthCVS Insurance Portal Insurance</div>
+            <div className="text-emerald-900 font-bold text-sm leading-tight">Star Health Insurance</div>
             <div className="text-emerald-600/80 text-xs font-medium">HealthCVS Portal</div>
           </div>
         </div>

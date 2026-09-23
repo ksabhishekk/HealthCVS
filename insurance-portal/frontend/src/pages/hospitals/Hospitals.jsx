@@ -134,7 +134,7 @@ export default function Hospitals() {
             </div>
             <div>
               <label className="label">Hospital name <span className="text-red-500">*</span></label>
-              <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="XYZ Hospital" required />
+              <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="City General Hospital" required />
             </div>
             <div className="col-span-2">
               <label className="label">Registered signing wallets <span className="text-red-500">*</span></label>

@@ -2,7 +2,7 @@
  * Empanels a hospital so claims from it can be verified.
  *
  *   npm run seed:hospitals
- *   npm run seed:hospitals -- --code CGH001 --name "XYZ Hospital" --wallet 0xabc...
+ *   npm run seed:hospitals -- --code CGH001 --name "City General Hospital" --wallet 0xabc...
  *
  * With no arguments it reads HOSPITAL_CODE, HOSPITAL_NAME and the wallet derived
  * from HOSPITAL_WALLET_PRIVATE_KEY out of ../../hospital-portal/backend/.env —
