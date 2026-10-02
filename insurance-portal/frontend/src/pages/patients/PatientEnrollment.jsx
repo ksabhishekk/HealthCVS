@@ -9,10 +9,10 @@ const shortenHash = (h) => h ? `${h.slice(0, 10)}…${h.slice(-8)}` : '—'
 const fmt = (n) => n ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n) : '—'
 
 const POLICY_TYPES = [
-  { value: 'individual',     label: 'Individual' },
+  { value: 'individual', label: 'Individual' },
   { value: 'family_floater', label: 'Family Floater' },
-  { value: 'corporate',      label: 'Corporate / Group' },
-  { value: 'government',     label: 'Government Scheme (PM-JAY etc.)' },
+  { value: 'corporate', label: 'Corporate / Group' },
+  { value: 'government', label: 'Government Scheme (PM-JAY etc.)' },
 ]
 
 export default function PatientEnrollment() {
@@ -328,7 +328,7 @@ export default function PatientEnrollment() {
                 <div>
                   <label className="label">Company PAN / GSTIN <span className="text-gray-400">(optional)</span></label>
                   <div className="flex gap-2">
-                    <input type="text" className="input uppercase" value={form.companyPan} onChange={e => { setField('companyPan', e.target.value); setKycStatus(p => ({...p, companyPan: {verified: false, loading: false}})) }} disabled={!canEnroll} />
+                    <input type="text" className="input uppercase" value={form.companyPan} onChange={e => { setField('companyPan', e.target.value); setKycStatus(p => ({ ...p, companyPan: { verified: false, loading: false } })) }} disabled={!canEnroll} />
                     <button type="button" className={`btn-secondary ${kycStatus.companyPan.verified ? '!bg-green-50 !text-green-700 !border-green-200' : ''}`} disabled={!form.companyPan || kycStatus.companyPan.loading || !canEnroll} onClick={() => handleVerifyKYC('companyPan', 'pan', form.companyPan)}>
                       {kycStatus.companyPan.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : kycStatus.companyPan.verified ? <CheckCircle className="w-4 h-4" /> : 'Verify'}
                     </button>
@@ -349,7 +349,7 @@ export default function PatientEnrollment() {
                 <div>
                   <label className="label">PM-JAY ID / ABHA ID <span className="text-gray-400">(optional)</span></label>
                   <div className="flex gap-2">
-                    <input type="text" className="input" value={form.pmjayId} onChange={e => { setField('pmjayId', e.target.value); setKycStatus(p => ({...p, pmjayId: {verified: false, loading: false}})) }} disabled={!canEnroll} />
+                    <input type="text" className="input" value={form.pmjayId} onChange={e => { setField('pmjayId', e.target.value); setKycStatus(p => ({ ...p, pmjayId: { verified: false, loading: false } })) }} disabled={!canEnroll} />
                     <button type="button" className={`btn-secondary ${kycStatus.pmjayId.verified ? '!bg-green-50 !text-green-700 !border-green-200' : ''}`} disabled={!form.pmjayId || kycStatus.pmjayId.loading || !canEnroll} onClick={() => handleVerifyKYC('pmjayId', form.pmjayId.includes('-') ? 'abha' : 'pmjay', form.pmjayId)}>
                       {kycStatus.pmjayId.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : kycStatus.pmjayId.verified ? <CheckCircle className="w-4 h-4" /> : 'Verify'}
                     </button>
@@ -358,7 +358,7 @@ export default function PatientEnrollment() {
                 <div>
                   <label className="label">Ration Card / Family ID <span className="text-gray-400">(optional)</span></label>
                   <div className="flex gap-2">
-                    <input type="text" className="input" value={form.rationCardNumber} onChange={e => { setField('rationCardNumber', e.target.value); setKycStatus(p => ({...p, rationCardNumber: {verified: false, loading: false}})) }} disabled={!canEnroll} />
+                    <input type="text" className="input" value={form.rationCardNumber} onChange={e => { setField('rationCardNumber', e.target.value); setKycStatus(p => ({ ...p, rationCardNumber: { verified: false, loading: false } })) }} disabled={!canEnroll} />
                     <button type="button" className={`btn-secondary ${kycStatus.rationCardNumber.verified ? '!bg-green-50 !text-green-700 !border-green-200' : ''}`} disabled={!form.rationCardNumber || kycStatus.rationCardNumber.loading || !canEnroll} onClick={() => handleVerifyKYC('rationCardNumber', 'ration_card', form.rationCardNumber)}>
                       {kycStatus.rationCardNumber.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : kycStatus.rationCardNumber.verified ? <CheckCircle className="w-4 h-4" /> : 'Verify'}
                     </button>

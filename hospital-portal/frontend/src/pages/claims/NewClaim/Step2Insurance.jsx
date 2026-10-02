@@ -24,7 +24,6 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
         aadhaarHash: data.aadhaarHash || undefined,
         aadhaarNumber: data.aadhaarNumber || undefined,
         policyId: ins.policyNumber,
-        insuranceCompany: 'Star Health',
       })
       if (result.valid) {
         update({
@@ -69,11 +68,16 @@ export default function Step2Insurance({ data, update, onNext, onBack }) {
           </div>
           <div className="col-span-2">
             <label className="label">Policy Type <span className="text-red-500">*</span></label>
-            <div className="flex gap-3">
-              {['individual', 'family', 'corporate'].map(t => (
-                <label key={t} className={`flex-1 border rounded-lg p-3 cursor-pointer transition-colors ${ins.policyType === t ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                  <input type="radio" className="sr-only" value={t} checked={ins.policyType === t} onChange={() => set('policyType', t)} />
-                  <div className="text-sm font-medium capitalize text-center">{t}</div>
+            <div className="flex gap-3 flex-wrap">
+              {[
+                { value: 'individual', label: 'Individual' },
+                { value: 'family', label: 'Family' },
+                { value: 'corporate', label: 'Corporate' },
+                { value: 'government', label: 'Govt. Scheme (PM-JAY)' },
+              ].map(({ value, label }) => (
+                <label key={value} className={`flex-1 border rounded-lg p-3 cursor-pointer transition-colors ${ins.policyType === value ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <input type="radio" className="sr-only" value={value} checked={ins.policyType === value} onChange={() => set('policyType', value)} />
+                  <div className="text-sm font-medium text-center">{label}</div>
                 </label>
               ))}
             </div>

@@ -9,10 +9,10 @@ router.use(authenticate)
 // Proxies to insurance portal server-to-server — hospital frontend never calls insurer directly.
 router.post('/verify-policy', async (req, res) => {
   try {
-    const { aadhaarHash: hash, aadhaarNumber, policyId, insuranceCompany } = req.body
+    const { aadhaarHash: hash, aadhaarNumber, policyId } = req.body
 
-    if (!policyId || !insuranceCompany) {
-      return res.status(400).json({ error: 'policyId and insuranceCompany are required' })
+    if (!policyId) {
+      return res.status(400).json({ error: 'policyId is required' })
     }
 
     let aadhaarHash = hash
@@ -34,7 +34,7 @@ router.post('/verify-policy', async (req, res) => {
         'Content-Type': 'application/json',
         'x-api-key': process.env.INSURANCE_API_KEY || '',
       },
-      body: JSON.stringify({ aadhaarHash, policyId, insuranceCompany }),
+      body: JSON.stringify({ aadhaarHash, policyId }),
       signal: AbortSignal.timeout(8000),
     })
 

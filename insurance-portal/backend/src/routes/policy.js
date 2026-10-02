@@ -15,9 +15,9 @@ const requireApiKey = (req, res, next) => {
 // Called by hospital backend only (server-to-server). Returns minimal info — no bulk patient data exposed.
 router.post('/verify', requireApiKey, async (req, res) => {
   try {
-    const { aadhaarHash, policyId, insuranceCompany } = req.body
-    if (!aadhaarHash || !policyId || !insuranceCompany) {
-      return res.status(400).json({ error: 'aadhaarHash, policyId, and insuranceCompany are required' })
+    const { aadhaarHash, policyId } = req.body
+    if (!aadhaarHash || !policyId) {
+      return res.status(400).json({ error: 'aadhaarHash and policyId are required' })
     }
 
     const record = await EnrolledPatient.findOne({ aadhaarHash })
@@ -28,9 +28,6 @@ router.post('/verify', requireApiKey, async (req, res) => {
     if (record.policyId !== policyId) {
       return res.json({ valid: false, reason: 'Policy ID does not match enrolled policy' })
     }
-    if (record.insuranceCompany.toLowerCase() !== insuranceCompany.toLowerCase()) {
-      return res.json({ valid: false, reason: 'Insurance company does not match records' })
-    }
 
     res.json({
       valid: true,
@@ -38,10 +35,6 @@ router.post('/verify', requireApiKey, async (req, res) => {
       policyType: record.policyType,
       coverageAmount: record.coverageAmount,
       expiryDate: record.expiryDate,
-      insuranceCompany: record.insuranceCompany,
-      // Returned so the hospital can send the consent OTP to the number the
-      // insurer holds rather than the one a clerk typed. Knowing the number
-      // does not let a clerk receive the SMS, so this is safe to share.
       contactNumber: record.contactNumber || null,
       email: record.email || null,
     })
