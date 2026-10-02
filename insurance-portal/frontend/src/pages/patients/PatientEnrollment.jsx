@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { CheckCircle, AlertTriangle, Loader2, Search, UserPlus } from 'lucide-react'
 import { registerPatient, checkPatient, updatePatientContact } from '../../api/patients'
 import { isValidAadhaar, AADHAAR_INVALID_MESSAGE } from '../../lib/aadhaar'
+import { verifyKYC } from '../../api/kyc'
 import { useAuth } from '../../context/AuthContext'
 
 const shortenHash = (h) => h ? `${h.slice(0, 10)}…${h.slice(-8)}` : '—'
@@ -28,12 +29,16 @@ export default function PatientEnrollment() {
     policyId: '',
     contactNumber: '',
     email: '',
-    insuranceCompany: 'Star Health',
     policyType: '',
     coverageAmount: '',
     expiryDate: '',
     walletAddress: '',
     notes: '',
+    companyName: '',
+    companyPan: '',
+    employeeId: '',
+    pmjayId: '',
+    rationCardNumber: '',
   })
   const [enrolling, setEnrolling] = useState(false)
   const [txHash, setTxHash] = useState(null)
@@ -42,6 +47,26 @@ export default function PatientEnrollment() {
   const [contactForm, setContactForm] = useState({ contactNumber: '', email: '' })
   const [contactSaving, setContactSaving] = useState(false)
   const [contactNotice, setContactNotice] = useState('')
+
+  // KYC Verification states
+  const [kycStatus, setKycStatus] = useState({
+    companyPan: { verified: false, loading: false },
+    pmjayId: { verified: false, loading: false },
+    rationCardNumber: { verified: false, loading: false }
+  })
+
+  const handleVerifyKYC = async (field, idType, idNumber) => {
+    if (!idNumber) return
+    setKycStatus(prev => ({ ...prev, [field]: { ...prev[field], loading: true } }))
+    setEnrollError('')
+    try {
+      await verifyKYC(idType, idNumber)
+      setKycStatus(prev => ({ ...prev, [field]: { verified: true, loading: false } }))
+    } catch (err) {
+      setKycStatus(prev => ({ ...prev, [field]: { verified: false, loading: false } }))
+      setEnrollError(err.response?.data?.error || `Verification failed for ${field}`)
+    }
+  }
 
   const setField = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -80,7 +105,7 @@ export default function PatientEnrollment() {
       const { data } = await registerPatient(form)
       setTxHash(data.txHash)
       setEnrollWarnings(data.warnings || [])
-      setForm({ aadhaarNumber: '', policyId: '', contactNumber: '', email: '', insuranceCompany: 'Star Health', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '' })
+      setForm({ aadhaarNumber: '', policyId: '', contactNumber: '', email: '', policyType: '', coverageAmount: '', expiryDate: '', walletAddress: '', notes: '', companyName: '', companyPan: '', employeeId: '', pmjayId: '', rationCardNumber: '' })
     } catch (err) {
       const data = err.response?.data
       setEnrollError(data?.error || data?.errors?.[0]?.msg || err.message || 'Enrollment failed')
@@ -255,7 +280,14 @@ export default function PatientEnrollment() {
               <div>
                 <label className="label">Policy Type <span className="text-red-500">*</span></label>
                 <select className="input" value={form.policyType}
-                  onChange={e => setField('policyType', e.target.value)}
+                  onChange={e => {
+                    const newType = e.target.value;
+                    if (newType === 'government') {
+                      setForm(f => ({ ...f, policyType: newType, coverageAmount: '500000' }));
+                    } else {
+                      setField('policyType', newType);
+                    }
+                  }}
                   required disabled={!canEnroll}>
                   <option value="">Select type…</option>
                   {POLICY_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
@@ -275,11 +307,66 @@ export default function PatientEnrollment() {
                 <input type="number" className="input"
                   value={form.coverageAmount}
                   onChange={e => setField('coverageAmount', e.target.value)}
-                  min={1} required disabled={!canEnroll}
+                  min={1} required disabled={!canEnroll || form.policyType === 'government'}
                 />
+                {form.policyType === 'government' && (
+                  <p className="text-xs text-blue-600 mt-1">PM-JAY is fixed at ₹5,00,000 per family per year.</p>
+                )}
               </div>
             </div>
           </div>
+
+          {/* Conditional Identifiers */}
+          {form.policyType === 'corporate' && (
+            <div className="mb-6 pt-6 border-t border-gray-100">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Corporate Identifiers</h3>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="label">Company Name <span className="text-gray-400">(optional)</span></label>
+                  <input type="text" className="input" value={form.companyName} onChange={e => setField('companyName', e.target.value)} disabled={!canEnroll} />
+                </div>
+                <div>
+                  <label className="label">Company PAN / GSTIN <span className="text-gray-400">(optional)</span></label>
+                  <div className="flex gap-2">
+                    <input type="text" className="input uppercase" value={form.companyPan} onChange={e => { setField('companyPan', e.target.value); setKycStatus(p => ({...p, companyPan: {verified: false, loading: false}})) }} disabled={!canEnroll} />
+                    <button type="button" className={`btn-secondary ${kycStatus.companyPan.verified ? '!bg-green-50 !text-green-700 !border-green-200' : ''}`} disabled={!form.companyPan || kycStatus.companyPan.loading || !canEnroll} onClick={() => handleVerifyKYC('companyPan', 'pan', form.companyPan)}>
+                      {kycStatus.companyPan.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : kycStatus.companyPan.verified ? <CheckCircle className="w-4 h-4" /> : 'Verify'}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="label">Employee ID <span className="text-gray-400">(optional)</span></label>
+                  <input type="text" className="input" value={form.employeeId} onChange={e => setField('employeeId', e.target.value)} disabled={!canEnroll} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {form.policyType === 'government' && (
+            <div className="mb-6 pt-6 border-t border-gray-100">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Government Scheme Identifiers</h3>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="label">PM-JAY ID / ABHA ID <span className="text-gray-400">(optional)</span></label>
+                  <div className="flex gap-2">
+                    <input type="text" className="input" value={form.pmjayId} onChange={e => { setField('pmjayId', e.target.value); setKycStatus(p => ({...p, pmjayId: {verified: false, loading: false}})) }} disabled={!canEnroll} />
+                    <button type="button" className={`btn-secondary ${kycStatus.pmjayId.verified ? '!bg-green-50 !text-green-700 !border-green-200' : ''}`} disabled={!form.pmjayId || kycStatus.pmjayId.loading || !canEnroll} onClick={() => handleVerifyKYC('pmjayId', form.pmjayId.includes('-') ? 'abha' : 'pmjay', form.pmjayId)}>
+                      {kycStatus.pmjayId.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : kycStatus.pmjayId.verified ? <CheckCircle className="w-4 h-4" /> : 'Verify'}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="label">Ration Card / Family ID <span className="text-gray-400">(optional)</span></label>
+                  <div className="flex gap-2">
+                    <input type="text" className="input" value={form.rationCardNumber} onChange={e => { setField('rationCardNumber', e.target.value); setKycStatus(p => ({...p, rationCardNumber: {verified: false, loading: false}})) }} disabled={!canEnroll} />
+                    <button type="button" className={`btn-secondary ${kycStatus.rationCardNumber.verified ? '!bg-green-50 !text-green-700 !border-green-200' : ''}`} disabled={!form.rationCardNumber || kycStatus.rationCardNumber.loading || !canEnroll} onClick={() => handleVerifyKYC('rationCardNumber', 'ration_card', form.rationCardNumber)}>
+                      {kycStatus.rationCardNumber.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : kycStatus.rationCardNumber.verified ? <CheckCircle className="w-4 h-4" /> : 'Verify'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Section 3: Contact */}
           <div className="mb-6 pt-6 border-t border-gray-100">

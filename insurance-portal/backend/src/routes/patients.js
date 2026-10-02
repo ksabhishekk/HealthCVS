@@ -21,7 +21,6 @@ router.get('/',
       if (type) filter.policyType = type
       if (search) filter.$or = [
         { policyId: { $regex: search, $options: 'i' } },
-        { insuranceCompany: { $regex: search, $options: 'i' } },
         { notes: { $regex: search, $options: 'i' } },
       ]
       const skip = (Number(page) - 1) * Number(limit)
@@ -75,18 +74,22 @@ router.post('/register',
   requireRole('admin'),
   body('aadhaarNumber').isLength({ min: 12, max: 12 }).isNumeric().withMessage('Aadhaar must be 12 digits'),
   body('policyId').notEmpty().trim().withMessage('Policy ID is required'),
-  body('insuranceCompany').notEmpty().trim().withMessage('Insurance company is required'),
   body('policyType').isIn(['individual', 'family_floater', 'corporate', 'government']).withMessage('Invalid policy type'),
   body('coverageAmount').isFloat({ min: 1 }).withMessage('Coverage amount must be a positive number'),
   body('expiryDate').isISO8601().withMessage('Expiry date must be a valid date'),
   body('contactNumber').optional({ checkFalsy: true }).matches(/^\d{10}$/).withMessage('Contact number must be 10 digits'),
   body('walletAddress').optional({ checkFalsy: true }).isEthereumAddress().withMessage('Wallet must be a valid Ethereum address'),
   body('email').optional({ checkFalsy: true }).isEmail().normalizeEmail().withMessage('Email must be a valid address'),
+  body('companyName').optional().trim(),
+  body('companyPan').optional().trim(),
+  body('employeeId').optional().trim(),
+  body('pmjayId').optional().trim(),
+  body('rationCardNumber').optional().trim(),
   async (req, res) => {
     const errors = validationResult(req)
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() })
 
-    const { aadhaarNumber, policyId, insuranceCompany, policyType, coverageAmount, expiryDate, walletAddress, contactNumber, email, notes } = req.body
+    const { aadhaarNumber, policyId, policyType, coverageAmount, expiryDate, walletAddress, contactNumber, email, notes, companyName, companyPan, employeeId, pmjayId, rationCardNumber } = req.body
     if (aadhaarChecksumEnforced() && !isValidAadhaar(aadhaarNumber)) {
       return res.status(400).json({ error: AADHAAR_INVALID_MESSAGE })
     }
@@ -116,10 +119,14 @@ router.post('/register',
       await EnrolledPatient.create({
         aadhaarHash,
         policyId,
-        insuranceCompany,
         policyType,
         coverageAmount: Number(coverageAmount),
         expiryDate: new Date(expiryDate),
+        companyName: companyName || null,
+        companyPan: companyPan || null,
+        employeeId: employeeId || null,
+        pmjayId: pmjayId || null,
+        rationCardNumber: rationCardNumber || null,
         isPolicyActive: true,
         contactNumber: contactNumber || null,
         email: email || null,
@@ -173,10 +180,14 @@ router.get('/:aadhaarHash/status', async (req, res) => {
       policyId: patient.policyId,
       registeredAt: Number(patient.registeredAt) * 1000,
       // MongoDB enrichment
-      insuranceCompany: record?.insuranceCompany || null,
       policyType: record?.policyType || null,
       coverageAmount: record?.coverageAmount || null,
       expiryDate: record?.expiryDate || null,
+      companyName: record?.companyName || null,
+      companyPan: record?.companyPan || null,
+      employeeId: record?.employeeId || null,
+      pmjayId: record?.pmjayId || null,
+      rationCardNumber: record?.rationCardNumber || null,
       isPolicyActive: record?.isPolicyActive ?? null,
     })
   } catch (err) {
@@ -212,10 +223,14 @@ router.post('/check',
         walletAddress: patient.walletAddress,
         policyId: patient.policyId,
         registeredAt: Number(patient.registeredAt) * 1000,
-        insuranceCompany: record?.insuranceCompany || null,
         policyType: record?.policyType || null,
         coverageAmount: record?.coverageAmount || null,
         expiryDate: record?.expiryDate || null,
+        companyName: record?.companyName || null,
+        companyPan: record?.companyPan || null,
+        employeeId: record?.employeeId || null,
+        pmjayId: record?.pmjayId || null,
+        rationCardNumber: record?.rationCardNumber || null,
         isPolicyActive: record?.isPolicyActive ?? null,
         hasEnrolmentRecord: !!record,
         contactNumber: record?.contactNumber || null,

@@ -3,11 +3,17 @@ const mongoose = require('mongoose')
 const enrolledPatientSchema = new mongoose.Schema({
   aadhaarHash:      { type: String, required: true, unique: true, index: true },
   policyId:         { type: String, required: true },
-  insuranceCompany: { type: String, required: true },
   policyType:       { type: String, required: true, enum: ['individual', 'family_floater', 'corporate', 'government'] },
   coverageAmount:   { type: Number, required: true },
   expiryDate:       { type: Date,   required: true },
   isPolicyActive:   { type: Boolean, default: true },
+  // Corporate / Group identifiers
+  companyName:      { type: String, default: null },
+  companyPan:       { type: String, default: null },
+  employeeId:       { type: String, default: null },
+  // Government Scheme identifiers
+  pmjayId:          { type: String, default: null },
+  rationCardNumber: { type: String, default: null },
   // The patient's own number, held by the insurer so that claim-consent OTPs
   // go to a destination the hospital cannot choose. See hospital-portal's
   // routes/consent.js — without this, a clerk could enter their own number
