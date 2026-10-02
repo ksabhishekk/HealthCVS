@@ -12,6 +12,7 @@ import ClaimList from './pages/claims/ClaimList'
 import ClaimDetail from './pages/claims/ClaimDetail'
 import NewClaim from './pages/claims/NewClaim'
 import StaffList from './pages/admin/StaffList'
+import Insurer from './pages/insurer/Insurer'
 
 function AppRoutes() {
   return (
@@ -30,6 +31,7 @@ function AppRoutes() {
         <Route path="/admin/staff" element={
           <ProtectedRoute adminOnly><StaffList /></ProtectedRoute>
         } />
+        <Route path="/insurer" element={<Insurer />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

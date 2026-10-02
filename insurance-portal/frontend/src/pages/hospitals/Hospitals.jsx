@@ -171,7 +171,7 @@ export default function Hospitals() {
             ))}
             <div className="mt-3 flex items-center gap-1.5 text-xs text-gray-400">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-              Verified on Polygon Amoy testnet
+              Verified on blockchain
             </div>
           </div>
         </div>

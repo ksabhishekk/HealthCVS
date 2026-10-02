@@ -10,6 +10,7 @@ const clerkNav = [
   { to: '/patients',  icon: Users,           label: 'Patients' },
   { to: '/claims',    icon: FileText,         label: 'Claims' },
   { to: '/claims/new',icon: PlusCircle,       label: 'New Claim' },
+  { to: '/insurer',   icon: ShieldCheck,      label: 'Insurer' },
 ]
 
 const adminNav = [
