@@ -18,6 +18,11 @@ const DOCTORS = [
   { name: 'Dr. Anita Patil',    department: 'Paediatrics',                 specialization: 'Neonatology',                registrationNumber: 'MCI-12352' },
   { name: 'Dr. Suresh Nair',    department: 'Urology',                     specialization: 'Endourology',                registrationNumber: 'MCI-12353' },
   { name: 'Dr. Meena Gupta',    department: 'General Medicine',            specialization: 'Internal Medicine',          registrationNumber: 'MCI-12354' },
+  // Registrations that resolve on the public NMC Indian Medical Register, so
+  // the doctor-verification check passes on the demo claims
+  // (config/demo_scenarios.json). The sample doctors above do not.
+  { name: 'Bhupendranath Gupta Bhaya', department: 'General Surgery',     specialization: 'General Surgery',            registrationNumber: '5002' },
+  { name: 'Sibaprasad Sur',            department: 'General Medicine',    specialization: 'General Medicine',           registrationNumber: '15002' },
 ]
 
 const PROCEDURES = [

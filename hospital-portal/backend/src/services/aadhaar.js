@@ -36,4 +36,8 @@ const aadhaarChecksumEnforced = () => process.env.ENFORCE_AADHAAR_CHECKSUM !== "
 const AADHAAR_INVALID_MESSAGE =
   "This is not a valid Aadhaar number — Aadhaar numbers start with 2-9 and end in a Verhoeff check digit."
 
-module.exports = { verhoeffValid, isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE }
+// A person's PAN has "P" (individual) as its 4th character; C, F, T… are businesses and trusts.
+const isIndividualPan = (pan) => /^[A-Z]{3}P[A-Z][0-9]{4}[A-Z]$/.test(String(pan || '').toUpperCase())
+const PAN_INVALID_MESSAGE = 'Not a valid individual PAN — 5 letters, 4 digits and a letter, with "P" as the 4th character.'
+
+module.exports = { verhoeffValid, isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE, isIndividualPan, PAN_INVALID_MESSAGE }

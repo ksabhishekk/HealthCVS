@@ -118,6 +118,60 @@ function TxBanner({ tx, label, notes }) {
   )
 }
 
+const REL = { self: 'Self', spouse: 'Spouse', son: 'Son', daughter: 'Daughter', father: 'Father', mother: 'Mother', father_in_law: 'Father-in-law', mother_in_law: 'Mother-in-law', other: 'Family member' }
+
+// The policy the claim is made under and what is left of the member's cover —
+// read live from the chain, so it reflects every approval so far.
+function PolicyCard({ policy, claimed, admissionDate }) {
+  const c = policy.cover
+  const usedPct = c?.sumInsured ? Math.min(100, Math.round((c.used / c.sumInsured) * 100)) : 0
+  const daysCovered = policy.member?.coverStart && admissionDate
+    ? Math.floor((new Date(admissionDate) - new Date(policy.member.coverStart)) / 86400000) : null
+  return (
+    <div className="card p-5 mb-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="badge bg-emerald-50 text-emerald-700">{policy.policyTypeLabel}</span>
+            <Link to={`/policies/${policy.policyId}`} className="font-mono text-sm text-emerald-700 hover:underline">{policy.policyId}</Link>
+            {policy.status !== 'active' && <span className="badge bg-red-100 text-red-700">Policy suspended</span>}
+          </div>
+          <p className="text-sm text-gray-700 mt-1.5">
+            {policy.planName && <>{policy.planName} · </>}held by <strong>{policy.holderName || '—'}</strong>
+          </p>
+          {policy.member && (
+            <p className="text-xs text-gray-500 mt-1">
+              Patient on record: <strong className="text-gray-700">{policy.member.name}</strong> ({REL[policy.member.relationship] || policy.member.relationship}, {policy.member.gender}, born {fmtDate(policy.member.dateOfBirth)}) · member {policy.member.memberId}
+              {policy.member.status !== 'active' && <span className="text-red-600"> · suspended</span>}
+            </p>
+          )}
+        </div>
+        <div className="text-right text-xs text-gray-500 space-y-0.5">
+          {policy.copayPercent > 0 && <div>Co-payment <strong className="text-gray-800">{policy.copayPercent}%</strong></div>}
+          <div>Waiting period <strong className="text-gray-800">{policy.waitingPeriodDays ? `${policy.waitingPeriodDays} days` : 'none'}</strong>
+            {daysCovered != null && policy.waitingPeriodDays > 0 && <> · admitted on day {daysCovered + 1} of cover</>}
+          </div>
+          <div>Period {fmtDate(policy.startDate)} – {fmtDate(policy.endDate)}</div>
+        </div>
+      </div>
+      {c && (
+        <div className="mt-4">
+          <div className="flex justify-between text-xs text-gray-500 mb-1.5">
+            <span>{policy.sharedBy} · {fmt(c.used)} used of {fmt(c.sumInsured)}</span>
+            <span className={`font-semibold ${c.remaining < claimed ? 'text-red-600' : 'text-gray-800'}`}>{fmt(c.remaining)} left</span>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div className={`h-2 rounded-full ${usedPct > 85 ? 'bg-red-500' : usedPct > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${usedPct}%` }} />
+          </div>
+          {c.remaining < claimed && (
+            <p className="text-xs text-red-600 mt-1.5">This claim ({fmt(claimed)}) is more than the sum insured left — at most {fmt(c.remaining)} can be approved.</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ClaimDetail() {
   const { id } = useParams()
   const { isAdmin, hasRole } = useAuth()
@@ -263,9 +317,11 @@ export default function ClaimDetail() {
         <div className={`border px-4 py-3 rounded-lg mb-5 text-sm ${claim.settlement.approvedAmount < claim.settlement.claimedAmount ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
           <strong>{s === 5 ? 'Settled' : 'Approved'}:</strong> {fmt(claim.settlement.approvedAmount)} of {fmt(claim.settlement.claimedAmount)} claimed
           {claim.settlement.approvedAmount < claim.settlement.claimedAmount && ' — partial settlement, recorded on-chain'}
-          {claim.settlement.recommendedAmount > 0 && ` · PM-JAY rate card supports ${fmt(claim.settlement.recommendedAmount)}`}
+          {claim.settlement.recommendedAmount > 0 && ` · the contract recommended ${fmt(claim.settlement.recommendedAmount)}`}
         </div>
       )}
+
+      {claim.policy && <PolicyCard policy={claim.policy} claimed={claim.claimedAmount} admissionDate={claim.admissionDate} />}
 
       {/* Insurer Review Notes / Rejection Reason */}
       {claim.reviewNotes && (
@@ -384,10 +440,12 @@ export default function ClaimDetail() {
             // right response to an inflated claim is usually to settle the part
             // that is supported, so suggest the amounts the evidence supports.
             const claimed = claim.claimedAmount
+            const remaining = claim.policy?.cover?.remaining
             const suggestions = [
-              claim.settlement?.recommendedAmount > 0 && claim.settlement.recommendedAmount < claimed && { label: 'PM-JAY ceiling', value: claim.settlement.recommendedAmount },
+              claim.settlement?.recommendedAmount > 0 && claim.settlement.recommendedAmount < claimed && { label: 'Contract recommends', value: claim.settlement.recommendedAmount },
               xaiBilledTotal > 0 && Math.round(xaiBilledTotal) < claimed && { label: 'Billed total', value: Math.round(xaiBilledTotal) },
-              { label: 'Full claim', value: claimed },
+              remaining != null && remaining < claimed && { label: 'Sum insured left', value: remaining },
+              (remaining == null || remaining >= claimed) && { label: 'Full claim', value: claimed },
             ].filter(Boolean)
             const entered = Number(approvedAmount || claimed)
             return (
@@ -397,7 +455,7 @@ export default function ClaimDetail() {
                 </label>
                 <div className="flex items-center gap-2 flex-wrap">
                   <input
-                    type="number" className="input w-44" min={1} max={claimed}
+                    type="number" className="input w-44" min={1} max={Math.min(claimed, remaining ?? claimed)}
                     placeholder={String(claimed)} value={approvedAmount}
                     onChange={e => setApprovedAmount(e.target.value)} disabled={actionLoading}
                   />
@@ -413,6 +471,9 @@ export default function ClaimDetail() {
                 )}
                 {entered > claimed && (
                   <p className="text-xs text-red-600 mt-1.5">You cannot approve more than the claimed {fmt(claimed)}.</p>
+                )}
+                {remaining != null && entered <= claimed && entered > remaining && (
+                  <p className="text-xs text-red-600 mt-1.5">Only {fmt(remaining)} of this member's sum insured is left — the contract will refuse more.</p>
                 )}
               </div>
             )

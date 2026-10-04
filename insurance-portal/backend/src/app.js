@@ -18,9 +18,10 @@ app.use(express.urlencoded({ extended: true }))
 
 app.use('/api/auth', require('./routes/auth'))
 app.use('/api/claims', require('./routes/claims'))
-app.use('/api/patients', require('./routes/patients'))
+app.use('/api/policies', require('./routes/policies'))
 app.use('/api/staff', require('./routes/staff'))
-app.use('/api/policy', require('./routes/policy'))
+app.use('/api/policy', require('./routes/policy'))      // server-to-server: hospital pre-authorisation check
+app.use('/api/network', require('./routes/network'))    // server-to-server: this insurer's network profile
 app.use('/api/hospitals', require('./routes/hospitals'))
 app.use('/api/kyc', require('./routes/kyc'))
 

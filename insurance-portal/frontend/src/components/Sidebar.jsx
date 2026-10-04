@@ -1,7 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
-  LayoutDashboard, FileText, UserPlus, UserCog,
-  LogOut, ShieldCheck, Building2, Users,
+  LayoutDashboard, FileText, UserCog, LogOut, ShieldCheck, Building2, ScrollText, BarChart3,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -13,14 +12,14 @@ const ROLE_LABELS = {
 
 const baseNav = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/claims', icon: FileText, label: 'Claims' },
-  { to: '/patients/enroll', icon: UserPlus, label: 'Enroll Patient' },
-  { to: '/hospitals', icon: Building2, label: 'Hospitals' },
+  { to: '/policies', icon: ScrollText, label: 'Policies' },
+  { to: '/hospitals', icon: Building2, label: 'Network Hospitals' },
 ]
 
 const adminNav = [
   ...baseNav,
-  { to: '/patients', icon: Users, label: 'Policyholders' },
   { to: '/admin/staff', icon: UserCog, label: 'Staff' },
 ]
 

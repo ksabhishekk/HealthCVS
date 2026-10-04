@@ -13,61 +13,78 @@ const sendTx = async (contract, method, args) => {
   try {
     const estimated = await contract[method].estimateGas(...args)
     overrides.gasLimit = (estimated * 3n) / 2n
-  } catch {
-    // Estimation itself failed (usually a genuine revert) — send without an
-    // override so the node surfaces its own error rather than this one.
+  } catch (e) {
+    // A genuine revert surfaces here first, with the contract's own message.
+    const reason = e?.reason || e?.shortMessage || e?.info?.error?.message
+    if (reason && /revert/i.test(String(e?.code || '') + reason)) throw new Error(cleanRevert(reason))
   }
-  return contract[method](...args, overrides)
+  try {
+    return await contract[method](...args, overrides)
+  } catch (e) {
+    throw new Error(cleanRevert(e?.reason || e?.shortMessage || e?.message || 'Transaction failed'))
+  }
+}
+
+// "execution reverted: ClaimSubmission: policy is suspended" → "Policy is suspended"
+function cleanRevert(message) {
+  const text = String(message)
+  const m = text.match(/(?:PatientRegistry|ClaimSubmission|AutoAdjudication|RoleManager): (.+?)(?:["']\s*\)?\s*$|"|$)/)
+  const out = m ? m[1].trim() : text.replace(/^execution reverted:?\s*/i, '').trim()
+  return out.charAt(0).toUpperCase() + out.slice(1)
 }
 
 let _provider, _wallet, _claimSubmission, _patientRegistry, _autoAdjudication
 
 const getContracts = () => {
   if (!_provider) {
-    _provider = new ethers.JsonRpcProvider(process.env.AMOY_RPC_URL)
+    // cacheTimeout -1: ethers otherwise caches eth_getTransactionCount for
+    // 250 ms, so two transactions sent back-to-back from one wallet on a
+    // fast-mining local chain get the same nonce and the second is refused.
+    _provider = new ethers.JsonRpcProvider(process.env.AMOY_RPC_URL, undefined, { cacheTimeout: -1 })
+    // The hospital's wallet: holds HOSPITAL_CLERK_ROLE (TX2) and DOCTOR_ROLE (TX3).
     _wallet = new ethers.Wallet(process.env.HOSPITAL_WALLET_PRIVATE_KEY, _provider)
 
     const csAddress = process.env.CLAIM_SUBMISSION_ADDRESS
-    if (csAddress && csAddress !== '0x0000000000000000000000000000000000000000') {
+    if (csAddress && csAddress !== ethers.ZeroAddress) {
       _claimSubmission = new ethers.Contract(csAddress, ClaimSubmissionABI, _wallet)
     }
-
     const prAddress = process.env.PATIENT_REGISTRY_ADDRESS
-    if (prAddress) {
+    if (prAddress && prAddress !== ethers.ZeroAddress) {
       _patientRegistry = new ethers.Contract(prAddress, PatientRegistryABI, _wallet)
     }
-
     const aaAddress = process.env.AUTO_ADJUDICATION_ADDRESS
-    if (aaAddress && aaAddress !== '0x0000000000000000000000000000000000000000') {
+    if (aaAddress && aaAddress !== ethers.ZeroAddress) {
       _autoAdjudication = new ethers.Contract(aaAddress, AutoAdjudicationABI, _wallet)
     }
   }
   return { provider: _provider, wallet: _wallet, claimSubmission: _claimSubmission, patientRegistry: _patientRegistry, autoAdjudication: _autoAdjudication }
 }
 
-// TX 1 — Register patient on-chain (insurer role required)
-const registerPatientOnBlockchain = async ({ aadhaarHash, walletAddress, policyId }) => {
-  const { patientRegistry } = getContracts()
-  if (!patientRegistry) throw new Error('PatientRegistry contract not available.')
+const policyKeyOf = (policyId) => ethers.keccak256(ethers.toUtf8Bytes(String(policyId)))
 
-  const tx = await sendTx(patientRegistry, 'registerPatient', [aadhaarHash, walletAddress || ethers.ZeroAddress, policyId || ''])
-  const receipt = await tx.wait()
-  return { txHash: receipt.hash }
+// An admission date ("2026-09-10") as unix seconds at midday local time, so a
+// date never slips across midnight into the day before or after.
+const admissionSeconds = (date) => {
+  const d = new Date(`${String(date).slice(0, 10)}T12:00:00`)
+  return BigInt(Math.floor(d.getTime() / 1000))
 }
 
-// TX 2 — Initialize claim with IPFS document CIDs (hospital clerk role required)
-const submitClaimToBlockchain = async ({ aadhaarHash, procedureCode, claimedAmount, cidBill, cidPrescription, cidDischarge }) => {
+// TX 2 — File the claim under a policy (hospital clerk role required). The
+// contract refuses it unless the patient was a covered member on that date.
+const submitClaimToBlockchain = async ({ aadhaarHash, policyKey, procedureCode, claimedAmount, admissionDate, cidBill, cidPrescription, cidDischarge }) => {
   const { claimSubmission } = getContracts()
   if (!claimSubmission) throw new Error('ClaimSubmission contract not yet deployed. Set CLAIM_SUBMISSION_ADDRESS in .env')
 
-  const tx = await sendTx(claimSubmission, 'initializeClaim', [
-    aadhaarHash,
+  const tx = await sendTx(claimSubmission, 'initializeClaim', [{
+    patientAadhaarHash: aadhaarHash,
+    policyKey,
     procedureCode,
-    BigInt(Math.round(claimedAmount)),
-    cidBill || '',
-    cidPrescription || '',
-    cidDischarge || '',
-  ])
+    claimedAmount: BigInt(Math.round(claimedAmount)),
+    admissionDate: admissionSeconds(admissionDate),
+    cidBill: cidBill || '',
+    cidPrescription: cidPrescription || '',
+    cidDischarge: cidDischarge || '',
+  }])
   const receipt = await tx.wait()
 
   let blockchainClaimId = null
@@ -89,75 +106,22 @@ const submitClaimToBlockchain = async ({ aadhaarHash, procedureCode, claimedAmou
 const authenticateClaimOnBlockchain = async (blockchainClaimId) => {
   const { claimSubmission } = getContracts()
   if (!claimSubmission) throw new Error('ClaimSubmission contract not yet deployed.')
-
   const tx = await sendTx(claimSubmission, 'authenticateClaim', [blockchainClaimId])
   const receipt = await tx.wait()
   return { txHash: receipt.hash }
 }
 
-// TX 4 — Write AI fraud score on-chain (admin/oracle role required)
-const updateFraudScoreOnBlockchain = async (blockchainClaimId, fraudScore) => {
-  const { claimSubmission } = getContracts()
-  if (!claimSubmission) throw new Error('ClaimSubmission contract not yet deployed.')
-  if (fraudScore < 0 || fraudScore > 100) throw new Error('Fraud score must be between 0 and 100.')
-
-  const tx = await sendTx(claimSubmission, 'updateFraudScore', [blockchainClaimId, BigInt(fraudScore)])
-  const receipt = await tx.wait()
-  return { txHash: receipt.hash }
-}
-
-// TX 5 — Run automated adjudication rules engine (admin/insurer role required)
-const adjudicateClaimOnBlockchain = async (blockchainClaimId) => {
-  const { autoAdjudication } = getContracts()
-  if (!autoAdjudication) throw new Error('AutoAdjudication contract not yet deployed. Set AUTO_ADJUDICATION_ADDRESS in .env')
-
-  const tx = await sendTx(autoAdjudication, 'adjudicateClaim', [blockchainClaimId])
-  const receipt = await tx.wait()
-
-  let approved = null
-  let reason = null
-  const iface = autoAdjudication.interface
-  for (const log of receipt.logs) {
-    try {
-      const parsed = iface.parseLog(log)
-      if (parsed?.name === 'ClaimAdjudicated') {
-        approved = parsed.args.approved
-        reason = parsed.args.reason
-        break
-      }
-    } catch {}
-  }
-
-  return { txHash: receipt.hash, approved, reason }
-}
-
-// TX 6 — Insurer manual review / override (insurer role required)
-const insurerReviewOnBlockchain = async (blockchainClaimId, approve) => {
-  const { autoAdjudication } = getContracts()
-  if (!autoAdjudication) throw new Error('AutoAdjudication contract not yet deployed.')
-
-  const tx = await sendTx(autoAdjudication, 'insurerReview', [blockchainClaimId, approve])
-  const receipt = await tx.wait()
-  return { txHash: receipt.hash, approved: approve }
-}
-
-// TX 7 — Settle claim (insurer role required)
-const settleClaimOnBlockchain = async (blockchainClaimId) => {
-  const { autoAdjudication } = getContracts()
-  if (!autoAdjudication) throw new Error('AutoAdjudication contract not yet deployed.')
-
-  const tx = await sendTx(autoAdjudication, 'settleClaim', [blockchainClaimId])
-  const receipt = await tx.wait()
-  return { txHash: receipt.hash }
-}
+// Claims this hospital filed: on a shared network, other hospitals' claims are
+// on the same chain.
+const isOurClaim = (onChainClaim) =>
+  String(onChainClaim?.clerkAddress || '').toLowerCase() === getContracts().wallet.address.toLowerCase()
 
 module.exports = {
   getContracts,
-  registerPatientOnBlockchain,
+  policyKeyOf,
+  admissionSeconds,
   submitClaimToBlockchain,
   authenticateClaimOnBlockchain,
-  updateFraudScoreOnBlockchain,
-  adjudicateClaimOnBlockchain,
-  insurerReviewOnBlockchain,
-  settleClaimOnBlockchain,
+  isOurClaim,
+  cleanRevert,
 }

@@ -7,6 +7,7 @@ import ClaimStatusBadge from '../../components/ClaimStatusBadge'
 import { useAuth } from '../../context/AuthContext'
 
 const fmt = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n)
+const POLICY_TYPE_LABELS = { individual: 'Individual', family_floater: 'Family Floater', corporate: 'Corporate (employer group)', group: 'Group (non-employer)', government: 'Government scheme (AB PM-JAY)' }
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
 const fmtTs = (ts) => ts ? new Date(ts).toLocaleString('en-IN') : '—'
 const shortenHash = (h) => h ? `${h.slice(0, 10)}…${h.slice(-8)}` : '—'
@@ -272,17 +273,17 @@ export default function ClaimDetail() {
         <div className="card p-5">
           <h2 className="font-semibold text-gray-900 mb-4">Insurance</h2>
           <dl className="space-y-3">
-            <Field label="Company" value={meta?.insurance?.company} />
+            <Field label="Insurer" value={claim.insurerName || meta?.insurer?.name || meta?.insurance?.company} />
             <Field label="Policy No." value={meta?.insurance?.policyNumber} />
-            <Field label="Policy Type" value={meta?.insurance?.policyType} />
-            {meta?.insurance?.isProposerDifferent && <>
-              <Field label="Proposer Name" value={meta?.insurance?.proposerName} />
-              <Field label="Proposer PAN" value={meta?.insurance?.proposerPan} />
-            </>}
-            {meta?.insurance?.policyType === 'corporate' && <>
-              <Field label="Employee ID" value={meta?.insurance?.employeeId} />
-              <Field label="Employer" value={meta?.insurance?.employerName} />
-            </>}
+            <Field label="Policy Type" value={POLICY_TYPE_LABELS[meta?.insurance?.policyType] || meta?.insurance?.policyType} />
+            <Field label="Member ID" value={meta?.insurance?.memberId} />
+            {meta?.insurance?.relationship && meta.insurance.relationship !== 'self' && (
+              <Field label="Patient is" value={`the policyholder's ${meta.insurance.relationship.replace(/_/g, ' ')}`} />
+            )}
+            {meta?.insurance?.memberRef && <Field label="ID on card" value={meta.insurance.memberRef} />}
+            <Field label="Admitted" value={fmtDate(meta?.admission?.admissionDate)} />
+            <Field label="Cause" value={{ illness: 'Illness', accident: 'Accident / injury', maternity: 'Maternity' }[meta?.medical?.hospitalisationCause]} />
+            <Field label="Bound on-chain to insurer" value={claim.insurer ? `${claim.insurer.slice(0, 10)}…${claim.insurer.slice(-6)}` : null} />
           </dl>
         </div>
 

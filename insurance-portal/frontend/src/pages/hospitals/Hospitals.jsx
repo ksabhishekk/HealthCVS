@@ -1,182 +1,178 @@
-import { Building2, CheckCircle2, ShieldCheck, MapPin, Phone, Mail, Globe, Clock, Stethoscope, Users, Star, Wifi } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Building2, Loader2, AlertTriangle, CheckCircle2, PauseCircle, PlayCircle, MapPin, ShieldCheck, Wallet, Plus } from 'lucide-react'
+import { getHospitals, addHospital, updateHospital } from '../../api/hospitals'
+import { useAuth } from '../../context/AuthContext'
 
-const HOSPITAL = {
-  name: 'City General Hospital',
-  code: 'CGH001',
-  tagline: 'Empanelled Partner Hospital',
-  address: '14, Healthcare Avenue, Koramangala, Bengaluru – 560034, Karnataka',
-  phone: '+91 80 2234 5678',
-  emergency: '+91 80 2234 5600',
-  email: 'admin@citygeneralhospital.in',
-  website: 'www.citygeneralhospital.in',
-  type: 'Multi-speciality',
-  beds: 450,
-  established: 2008,
-  accreditation: 'NABH Accredited',
-  operatingHours: '24 × 7 — Emergency & OPD',
-  specialities: [
-    'Cardiology & Cardiac Surgery',
-    'Orthopaedics & Joint Replacement',
-    'Oncology & Chemotherapy',
-    'Neurology & Neurosurgery',
-    'Nephrology & Dialysis',
-    'Gastroenterology',
-    'Pulmonology & Critical Care',
-    'Obstetrics & Gynaecology',
-  ],
-  wallets: [
-    '0x384aB8a0b0d3e5e490C93B33C613d1A5c074293bc',
-  ],
-  empanelledSince: '1 April 2023',
-  empanelledUntil: 'No expiry',
-  status: 'active',
-  cashlessLimit: '₹5,00,000',
-  tpaCode: 'CGH-SHI-2023',
-  claimEmail: 'claims@citygeneralhospital.in',
-}
+const short = (a) => (a ? `${a.slice(0, 8)}…${a.slice(-6)}` : '—')
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'No expiry')
+const fmtINR = (n) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0)
+const EMPTY = { code: '', name: '', registeredWallets: '', empanelledUntil: '', city: '', accreditation: '', specialities: '', beds: '', notes: '' }
 
-const InfoRow = ({ icon: Icon, label, value, mono }) => (
-  <div className="flex items-start gap-3">
-    <div className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center shrink-0 mt-0.5">
-      <Icon className="w-4 h-4 text-gray-500" />
-    </div>
-    <div>
-      <div className="text-xs text-gray-400 font-medium">{label}</div>
-      <div className={`text-sm text-gray-900 font-medium ${mono ? 'font-mono' : ''}`}>{value}</div>
-    </div>
-  </div>
-)
-
+/**
+ * This insurer's network hospitals — the ones empanelled for cashless claims.
+ * A claim's hospital is only trusted if the wallet that signed it on-chain
+ * (TX2) is registered here to that hospital.
+ */
 export default function Hospitals() {
+  const { isAdmin } = useAuth()
+  const [hospitals, setHospitals] = useState([])
+  const [unregistered, setUnregistered] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [form, setForm] = useState(EMPTY)
+  const [showForm, setShowForm] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+
+  const load = () => {
+    setLoading(true)
+    getHospitals()
+      .then(r => { setHospitals(r.data.hospitals || []); setUnregistered(r.data.unregistered || []) })
+      .catch(e => setError(e.response?.data?.error || 'Could not load the network'))
+      .finally(() => setLoading(false))
+  }
+  useEffect(load, [])
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setSaving(true); setError(''); setNotice('')
+    try {
+      await addHospital(form)
+      setNotice(`${form.name} (${form.code.toUpperCase()}) added to the network.`)
+      setForm(EMPTY)
+      setShowForm(false)
+      load()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not empanel the hospital')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggle = async (h) => {
+    const next = h.status === 'active' ? 'suspended' : 'active'
+    if (next === 'suspended' && !window.confirm(`Suspend ${h.name}? Its new claims will be flagged "hospital not verified".`)) return
+    setError(''); setNotice('')
+    try {
+      await updateHospital(h._id, { status: next })
+      setNotice(`${h.name} ${next === 'active' ? 'reactivated' : 'suspended'}.`)
+      load()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Update failed')
+    }
+  }
+
   return (
     <div className="w-full">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Partner Hospital</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Star Health Insurance is exclusively partnered with one empanelled hospital for the HealthCVS claim verification system.
-        </p>
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Network hospitals</h1>
+          <p className="text-sm text-gray-500 mt-1 max-w-3xl">
+            Hospitals empanelled with this insurer for cashless claims. A claim is trusted to come from a hospital only if the
+            wallet that signed it on-chain (TX2) is registered to that hospital here — knowing a hospital's code is not enough
+            to claim in its name.
+          </p>
+        </div>
+        {isAdmin && (
+          <button className="btn-primary shrink-0" onClick={() => setShowForm(s => !s)}><Plus className="w-4 h-4" /> Empanel hospital</button>
+        )}
       </div>
 
-      {/* Hero banner */}
-      <div className="card overflow-hidden mb-6">
-        <div className="bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-700 px-8 py-10 text-white relative overflow-hidden">
-          {/* Decorative circles */}
-          <div className="absolute -top-8 -right-8 w-48 h-48 rounded-full bg-white/5" />
-          <div className="absolute -bottom-12 -right-4 w-64 h-64 rounded-full bg-white/5" />
-          <div className="absolute top-4 right-40 w-24 h-24 rounded-full bg-white/5" />
+      {error && <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-5 text-sm"><AlertTriangle className="w-4 h-4 shrink-0" /> {error}</div>}
+      {notice && <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg mb-5 text-sm"><CheckCircle2 className="w-4 h-4 shrink-0" /> {notice}</div>}
 
-          <div className="relative z-10 flex items-start gap-6">
-            <div className="w-20 h-20 bg-white/15 rounded-2xl flex items-center justify-center shrink-0 backdrop-blur-sm border border-white/25">
-              <Building2 className="w-10 h-10 text-white" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-3 flex-wrap mb-1">
-                <h2 className="text-3xl font-bold">{HOSPITAL.name}</h2>
-                <span className="flex items-center gap-1.5 bg-white/20 text-white text-xs px-3 py-1 rounded-full font-semibold backdrop-blur-sm">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Active
-                </span>
-                <span className="flex items-center gap-1.5 bg-emerald-400/30 text-white text-xs px-3 py-1 rounded-full font-semibold">
-                  <Star className="w-3 h-3" /> NABH Accredited
-                </span>
-              </div>
-              <p className="text-emerald-100 text-sm flex items-center gap-1.5 mb-3">
-                <MapPin className="w-4 h-4 shrink-0" />
-                {HOSPITAL.address}
-              </p>
-              <div className="flex gap-6 text-sm text-emerald-100 flex-wrap">
-                <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> {HOSPITAL.beds} Beds</span>
-                <span className="flex items-center gap-1.5"><Stethoscope className="w-3.5 h-3.5" /> {HOSPITAL.type}</span>
-                <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Est. {HOSPITAL.established}</span>
-              </div>
-            </div>
-          </div>
+      {unregistered.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg mb-5 text-sm">
+          <strong>Claims from unregistered wallets:</strong>{' '}
+          {unregistered.map(u => `${short(u.wallet)} (${u.claims} claim${u.claims === 1 ? '' : 's'})`).join(', ')} — these are flagged "hospital not verified".
         </div>
-      </div>
+      )}
 
-      <div className="grid grid-cols-3 gap-6">
-
-        {/* Left column: Contact & General */}
-        <div className="space-y-6">
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-5">Contact Information</h3>
-            <div className="space-y-4">
-              <InfoRow icon={Phone} label="General Line" value={HOSPITAL.phone} />
-              <InfoRow icon={Phone} label="Emergency" value={HOSPITAL.emergency} />
-              <InfoRow icon={Mail} label="Administration" value={HOSPITAL.email} />
-              <InfoRow icon={Globe} label="Website" value={HOSPITAL.website} />
-              <InfoRow icon={Clock} label="Hours" value={HOSPITAL.operatingHours} />
-            </div>
+      {showForm && isAdmin && (
+        <form onSubmit={submit} className="card p-6 mb-6 grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <h2 className="col-span-full font-semibold text-gray-900">Empanel a hospital</h2>
+          <div><label className="label">Hospital code *</label><input className="input font-mono uppercase" value={form.code} onChange={e => set('code', e.target.value)} placeholder="CGH001" required /></div>
+          <div className="lg:col-span-2"><label className="label">Hospital name *</label><input className="input" value={form.name} onChange={e => set('name', e.target.value)} required /></div>
+          <div><label className="label">City</label><input className="input" value={form.city} onChange={e => set('city', e.target.value)} /></div>
+          <div className="col-span-full"><label className="label">Signing wallets *</label>
+            <input className="input font-mono" value={form.registeredWallets} onChange={e => set('registeredWallets', e.target.value)} placeholder="0x…, 0x… (comma-separated)" required />
+            <p className="text-xs text-gray-500 mt-1">The wallet(s) this hospital's portal signs claims with.</p></div>
+          <div><label className="label">Accreditation</label>
+            <select className="input" value={form.accreditation} onChange={e => set('accreditation', e.target.value)}>
+              <option value="">—</option><option>NABH</option><option>NABH entry-level</option><option>JCI</option><option>None</option>
+            </select></div>
+          <div><label className="label">Beds</label><input type="number" min={0} className="input" value={form.beds} onChange={e => set('beds', e.target.value)} /></div>
+          <div><label className="label">Empanelled until</label><input type="date" className="input" value={form.empanelledUntil} onChange={e => set('empanelledUntil', e.target.value)} /></div>
+          <div className="lg:col-span-1" />
+          <div className="col-span-full"><label className="label">Specialities</label><input className="input" value={form.specialities} onChange={e => set('specialities', e.target.value)} placeholder="General Surgery, Orthopaedics, …" /></div>
+          <div className="col-span-full flex gap-2">
+            <button type="submit" className="btn-primary" disabled={saving}>{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Building2 className="w-4 h-4" />} Empanel</button>
+            <button type="button" className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
           </div>
+        </form>
+      )}
 
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-5">Empanelment Status</h3>
-            <div className="space-y-4">
-              <div>
-                <div className="text-xs text-gray-400 mb-1">Current Status</div>
-                <span className="inline-flex items-center gap-1.5 bg-green-100 text-green-700 text-sm font-semibold px-3 py-1 rounded-full">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Active
-                </span>
-              </div>
-              <InfoRow icon={Building2} label="Hospital Code" value={HOSPITAL.code} mono />
-              <InfoRow icon={ShieldCheck} label="TPA Code" value={HOSPITAL.tpaCode} mono />
-              <InfoRow icon={Clock} label="Empanelled Since" value={HOSPITAL.empanelledSince} />
-              <InfoRow icon={Clock} label="Valid Until" value={HOSPITAL.empanelledUntil} />
-            </div>
-          </div>
-        </div>
-
-        {/* Middle column: Specialities */}
-        <div className="space-y-6">
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-5">Medical Specialities</h3>
-            <div className="space-y-2">
-              {HOSPITAL.specialities.map(s => (
-                <div key={s} className="flex items-center gap-2.5 py-2 border-b border-gray-50 last:border-0">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                  <span className="text-sm text-gray-700">{s}</span>
+      {loading ? (
+        <div className="p-10 text-center text-gray-400 text-sm">Loading…</div>
+      ) : hospitals.length === 0 ? (
+        <div className="card p-10 text-center text-sm text-gray-500">No network hospitals yet. Until one is added, hospital identity on claims is reported as <em>not checked</em>.</div>
+      ) : (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          {hospitals.map(h => {
+            const expired = h.empanelledUntil && new Date(h.empanelledUntil) < new Date()
+            const status = h.status !== 'active' ? 'Suspended' : expired ? 'Expired' : 'Active'
+            return (
+              <div key={h._id} className="card overflow-hidden">
+                <div className={`px-6 py-5 ${status === 'Active' ? 'bg-gradient-to-br from-emerald-600 to-teal-700' : 'bg-gray-500'} text-white`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h2 className="text-xl font-bold">{h.name}</h2>
+                        <span className="text-xs font-semibold bg-white/20 px-2.5 py-0.5 rounded-full">{status}</span>
+                        {h.accreditation && h.accreditation !== 'None' && <span className="text-xs font-semibold bg-white/15 px-2.5 py-0.5 rounded-full">{h.accreditation}</span>}
+                      </div>
+                      <p className="text-sm text-white/80 mt-1 flex items-center gap-1.5">
+                        <span className="font-mono">{h.code}</span>
+                        {h.city && <><MapPin className="w-3.5 h-3.5 ml-2" /> {h.city}</>}
+                        {h.beds && <span className="ml-2">· {h.beds} beds</span>}
+                      </p>
+                    </div>
+                    {isAdmin && (
+                      <button className="text-xs font-semibold bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5" onClick={() => toggle(h)}>
+                        {h.status === 'active' ? <><PauseCircle className="w-3.5 h-3.5" /> Suspend</> : <><PlayCircle className="w-3.5 h-3.5" /> Reactivate</>}
+                      </button>
+                    )}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Right column: Blockchain & Claim info */}
-        <div className="space-y-6">
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-5">Claims Configuration</h3>
-            <div className="space-y-4">
-              <InfoRow icon={Mail} label="Claims Email" value={HOSPITAL.claimEmail} />
-              <div>
-                <div className="text-xs text-gray-400 mb-1">Cashless Claim Limit</div>
-                <div className="text-2xl font-bold text-emerald-600">{HOSPITAL.cashlessLimit}</div>
-                <div className="text-xs text-gray-400 mt-0.5">per policy, per annum</div>
+                <div className="p-5 grid grid-cols-2 gap-5 text-sm">
+                  <div>
+                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5" /> Signing wallets</div>
+                    {h.registeredWallets.map(w => <div key={w} className="font-mono text-xs text-gray-700 break-all">{w}</div>)}
+                    <div className="text-[11px] text-gray-400 mt-2 flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> checked against TX2's signer on every claim</div>
+                    <div className="text-xs text-gray-500 mt-2">Empanelled {fmtDate(h.createdAt)} · valid until {fmtDate(h.empanelledUntil)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Claims with us</div>
+                    <div className="grid grid-cols-2 gap-y-1 text-xs">
+                      <span className="text-gray-500">Filed</span><span className="font-semibold text-gray-800">{h.claimStats.claims}</span>
+                      <span className="text-gray-500">Amount claimed</span><span className="font-semibold text-gray-800">{fmtINR(h.claimStats.claimed)}</span>
+                      <span className="text-gray-500">Settled</span><span className="font-semibold text-gray-800">{h.claimStats.settled}</span>
+                      <span className="text-gray-500">Flagged / rejected</span><span className="font-semibold text-gray-800">{h.claimStats.flagged} / {h.claimStats.rejected}</span>
+                    </div>
+                  </div>
+                  {h.specialities?.length > 0 && (
+                    <div className="col-span-2 flex flex-wrap gap-1.5">
+                      {h.specialities.map(s => <span key={s} className="text-xs bg-gray-50 border border-gray-100 text-gray-600 px-2 py-0.5 rounded-md">{s}</span>)}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          </div>
-
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Blockchain Identity</h3>
-            <p className="text-xs text-gray-500 mb-4">
-              Claims submitted on-chain (TX2) must be signed by one of the wallets below. This prevents any other party from submitting claims in the name of this hospital.
-            </p>
-            <div className="flex items-center gap-2 mb-3">
-              <Wifi className="w-4 h-4 text-emerald-600" />
-              <span className="text-sm font-semibold text-gray-700">Authorized Signing Wallets</span>
-            </div>
-            {HOSPITAL.wallets.map((w, i) => (
-              <div key={i} className="bg-gray-50 border border-gray-100 rounded-lg p-3 mb-2">
-                <div className="font-mono text-xs text-gray-700 break-all">{w}</div>
-              </div>
-            ))}
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-gray-400">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-              Verified on blockchain
-            </div>
-          </div>
+            )
+          })}
         </div>
-
-      </div>
+      )}
     </div>
   )
 }

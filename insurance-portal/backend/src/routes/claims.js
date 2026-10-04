@@ -7,7 +7,23 @@ const {
   settleClaimOnBlockchain,
   getContracts,
   getSettlement,
+  getMemberCover,
+  isOurClaim,
 } = require('../services/blockchain')
+const Policy = require('../models/Policy')
+const PolicyMember = require('../models/PolicyMember')
+const { TYPE_INFO } = require('../services/policyRules')
+
+// Every claim on the chain made under one of this insurer's policies.
+async function ourClaimsOnChain() {
+  const { claimSubmission } = getContracts()
+  if (!claimSubmission) return []
+  const total = Number(await claimSubmission.getTotalClaims())
+  const all = await Promise.all(
+    Array.from({ length: total }, (_, i) => i + 1).map(id => claimSubmission.getClaim(id).catch(() => null))
+  )
+  return all.filter(c => c && isOurClaim(c))
+}
 
 const router = express.Router()
 
@@ -109,6 +125,9 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
   const base = {
     blockchainClaimId: id,
     patientAadhaarHash: onChainClaim.patientAadhaarHash,
+    policyKey: onChainClaim.policyKey,
+    insurer: onChainClaim.insurer,
+    admissionDate: Number(onChainClaim.admissionDate) * 1000,
     procedureCode: onChainClaim.procedureCode,
     claimedAmount: Number(onChainClaim.claimedAmount),
     cidBill: onChainClaim.cidBill,
@@ -133,6 +152,45 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
     base.hospitalName = metadata.hospital?.name || null
   }
 
+  // The policy and member this claim is made under, from our own records.
+  try {
+    const [policy, member] = await Promise.all([
+      Policy.findOne({ policyKey: onChainClaim.policyKey }).lean(),
+      PolicyMember.findOne({ policyKey: onChainClaim.policyKey, aadhaarHash: onChainClaim.patientAadhaarHash }).lean(),
+    ])
+    if (policy) {
+      base.policyId = policy.policyId
+      base.policyType = policy.policyType
+      base.policyTypeLabel = TYPE_INFO[policy.policyType]?.label
+      if (!base.patientName && member) base.patientName = member.name
+    }
+    if (includeMetadata && policy) {
+      let cover = null
+      try { cover = await getMemberCover(onChainClaim.policyKey, onChainClaim.patientAadhaarHash) } catch {}
+      base.policy = {
+        policyId: policy.policyId,
+        policyType: policy.policyType,
+        policyTypeLabel: TYPE_INFO[policy.policyType]?.label,
+        planName: policy.planName,
+        holderName: policy.policyType === 'corporate' ? policy.corporate?.companyName
+          : policy.policyType === 'group' ? policy.group?.groupName : policy.proposer?.name,
+        sharedBy: TYPE_INFO[policy.policyType]?.poolLabel,
+        copayPercent: policy.copayPercent,
+        waitingPeriodDays: policy.waitingPeriodDays,
+        startDate: policy.startDate,
+        endDate: policy.endDate,
+        status: policy.status,
+        member: member ? {
+          memberId: member.memberId, name: member.name, relationship: member.relationship,
+          gender: member.gender, dateOfBirth: member.dateOfBirth, coverStart: member.coverStart, status: member.status,
+        } : null,
+        cover,
+      }
+    }
+  } catch (err) {
+    console.warn(`[Insurance] Could not attach policy details: ${err.message}`)
+  }
+
   if (includeMetadata) {
     base.settlement = await getSettlement(id)
   }
@@ -152,28 +210,15 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
   return base
 }
 
-// GET /api/claims — list all claims from blockchain
+// GET /api/claims — claims under this insurer's policies, newest first
 router.get('/', async (req, res) => {
   try {
     const { claimSubmission } = getContracts()
     if (!claimSubmission) {
       return res.json({ claims: [], total: 0, message: 'ClaimSubmission contract not available' })
     }
-
-    const total = Number(await claimSubmission.getTotalClaims())
-    if (total === 0) return res.json({ claims: [], total: 0 })
-
-    const claims = await Promise.all(
-      Array.from({ length: total }, (_, i) => i + 1).map(async (id) => {
-        try {
-          const onChain = await claimSubmission.getClaim(id)
-          return enrichClaim(onChain, false)
-        } catch {
-          return null
-        }
-      })
-    )
-
+    const ours = await ourClaimsOnChain()
+    const claims = await Promise.all(ours.map(c => enrichClaim(c, false).catch(() => null)))
     const valid = claims.filter(Boolean).reverse()
     res.json({ claims: valid, total: valid.length })
   } catch (err) {
@@ -188,20 +233,7 @@ router.get('/stats', async (req, res) => {
     if (!claimSubmission) {
       return res.json({ total: 0, submitted: 0, settled: 0, flagged: 0, rejected: 0, pending: 0 })
     }
-
-    const total = Number(await claimSubmission.getTotalClaims())
-    if (total === 0) {
-      return res.json({ total: 0, submitted: 0, doctor_authenticated: 0, fraud_scored: 0, adjudicated: 0, insurer_reviewed: 0, settled: 0, flagged: 0, rejected: 0, pending: 0 })
-    }
-
-    const statuses = (await Promise.all(
-      Array.from({ length: total }, (_, i) => i + 1).map(async (id) => {
-        try {
-          const c = await claimSubmission.getClaim(id)
-          return Number(c.status)
-        } catch { return null }
-      })
-    )).filter(s => s !== null)
+    const statuses = (await ourClaimsOnChain()).map(c => Number(c.status))
 
     res.json({
       total: statuses.length,
@@ -256,13 +288,31 @@ router.get('/analytics/signals', async (req, res) => {
   }
 })
 
+// GET /api/claims/analytics/overview — everything the Analytics page charts
+router.get('/analytics/overview', async (req, res) => {
+  try {
+    const { buildInsurerAnalytics } = require('../services/analytics')
+    res.json(await buildInsurerAnalytics())
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Loads an on-chain claim and refuses it unless it is under one of our policies.
+async function ourClaim(id, res) {
+  const { claimSubmission } = getContracts()
+  if (!claimSubmission) { res.status(503).json({ error: 'ClaimSubmission contract not available' }); return null }
+  const onChain = await claimSubmission.getClaim(Number(id))
+  if (!Number(onChain.claimId)) { res.status(404).json({ error: 'Claim not found' }); return null }
+  if (!isOurClaim(onChain)) { res.status(404).json({ error: 'This claim is under another insurer’s policy' }); return null }
+  return onChain
+}
+
 // GET /api/claims/:id — single claim with full IPFS metadata
 router.get('/:id', async (req, res) => {
   try {
-    const { claimSubmission } = getContracts()
-    if (!claimSubmission) return res.status(503).json({ error: 'ClaimSubmission contract not available' })
-
-    const onChain = await claimSubmission.getClaim(req.params.id)
+    const onChain = await ourClaim(req.params.id, res)
+    if (!onChain) return
     const claim = await enrichClaim(onChain, true)
     res.json({ claim })
   } catch (err) {
@@ -282,6 +332,7 @@ router.post('/:id/fraud-score',
       }
       const score = Number(fraudScore)
       if (score < 0 || score > 100) return res.status(400).json({ error: 'fraudScore must be 0–100' })
+      if (!(await ourClaim(req.params.id, res))) return
 
       const { txHash } = await updateFraudScoreOnBlockchain(Number(req.params.id), score)
       res.json({ success: true, txHash, fraudScore: score })
@@ -298,8 +349,8 @@ router.post('/:id/adjudicate',
   async (req, res) => {
     try {
       const id = Number(req.params.id)
-      const { claimSubmission } = getContracts()
-      const onChain = await claimSubmission.getClaim(id)
+      const onChain = await ourClaim(id, res)
+      if (!onChain) return
       const metadata = await fetchClaimMetadata(onChain.cidDischarge)
       const result = await adjudicateClaimOnBlockchain(id, buildItemisation(onChain, metadata))
       res.json({ success: true, ...result })
@@ -319,14 +370,27 @@ router.post('/:id/insurer-review',
         return res.status(400).json({ error: 'approve (true/false) is required' })
       }
       const id = Number(req.params.id)
-      const { claimSubmission } = getContracts()
-      const onChain = await claimSubmission.getClaim(id)
+      const onChain = await ourClaim(id, res)
+      if (!onChain) return
       const claimedAmount = Number(onChain.claimedAmount)
 
       // Approving defaults to the full claim; a reviewer can approve less.
       const approvedAmount = Boolean(approve) ? Math.round(Number(req.body.approvedAmount ?? claimedAmount)) : 0
       if (Boolean(approve) && (!(approvedAmount > 0) || approvedAmount > claimedAmount)) {
         return res.status(400).json({ error: `Approved amount must be between ₹1 and the claimed ₹${claimedAmount.toLocaleString('en-IN')}` })
+      }
+      // The contract refuses anything above the remaining sum insured; say so
+      // in plain words before sending a transaction that would revert.
+      if (Boolean(approve)) {
+        try {
+          const cover = await getMemberCover(onChain.policyKey, onChain.patientAadhaarHash)
+          if (approvedAmount > cover.remaining) {
+            return res.status(400).json({
+              error: `Only ₹${cover.remaining.toLocaleString('en-IN')} of this member's sum insured is left — approve that or less.`,
+              remaining: cover.remaining,
+            })
+          }
+        } catch {}
       }
 
       const { txHash, approved } = await insurerReviewOnBlockchain(id, Boolean(approve), approvedAmount)
@@ -381,6 +445,7 @@ router.post('/:id/settle',
   requireRole('admin', 'finance'),
   async (req, res) => {
     try {
+      if (!(await ourClaim(req.params.id, res))) return
       const { txHash, amount } = await settleClaimOnBlockchain(Number(req.params.id))
       res.json({ success: true, txHash, amount })
     } catch (err) {
@@ -442,6 +507,7 @@ router.post('/:id/oracle-trigger',
     try {
       const { processClaimAI } = require('../oracleWorker')
       const claimId = Number(req.params.id)
+      if (!(await ourClaim(claimId, res))) return
       res.json({ success: true, message: `Oracle pipeline started for Claim #${claimId}. Check server logs.` })
       // Run async so the HTTP response returns immediately. The failure path
       // used to only console.error, so a manual re-run that died left the claim

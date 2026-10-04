@@ -3,6 +3,7 @@ const { ethers } = require('ethers')
 const { authenticate } = require('../middleware/auth')
 const ClaimConsent = require('../models/ClaimConsent')
 const { generateOtp, generateConsentToken, sendOtp } = require('../services/otp')
+const { verifyWithInsurer } = require('./insurance')
 
 const router = express.Router()
 router.use(authenticate)
@@ -13,63 +14,56 @@ const OTP_TTL_MS = 10 * 60 * 1000  // 10 minutes
 // Sends (or dev-mode logs) an OTP to the patient's own on-file contact number.
 router.post('/send', async (req, res) => {
   try {
-    const { contactNumber: formNumber, aadhaarNumber, policyId, insuranceCompany, patientName, procedureSummary } = req.body
+    const { contactNumber: formNumber, aadhaarNumber, aadhaarHash: givenHash, policyId, insurerCode, patientName, procedureSummary } = req.body
 
-    // Prefer the number the *insurer* holds for this patient over the one the
-    // clerk typed into the claim form. Whoever chooses the destination can
-    // receive the OTP, so letting the hospital pick it makes the consent step
-    // prove nothing against a colluding clerk — the exact blind spot this
-    // feature exists to close. The form value is only a fallback for patients
-    // enrolled before contactNumber was recorded.
-    const consentAadhaarHash = aadhaarNumber
-      ? ethers.keccak256(ethers.toUtf8Bytes(aadhaarNumber))
-      : null
+    // The code goes to the contact the *insurer* holds for this member, never
+    // one the clerk typed: whoever chooses the destination can receive the
+    // OTP, so letting the hospital pick it would make consent prove nothing
+    // against a colluding clerk. The form number is only a fallback for a
+    // member enrolled without any contact on record.
+    const consentAadhaarHash = givenHash || (aadhaarNumber ? ethers.keccak256(ethers.toUtf8Bytes(aadhaarNumber)) : null)
 
     let contactNumber = null
     let email = null
     let numberSource = 'form'
-    if (process.env.INSURANCE_PORTAL_URL && aadhaarNumber && policyId && insuranceCompany) {
+    if (consentAadhaarHash && policyId) {
       try {
-        const aadhaarHash = ethers.keccak256(ethers.toUtf8Bytes(aadhaarNumber))
-        const verifyRes = await fetch(`${process.env.INSURANCE_PORTAL_URL}/api/policy/verify`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.INSURANCE_API_KEY || '' },
-          body: JSON.stringify({ aadhaarHash, policyId, insuranceCompany }),
-          signal: AbortSignal.timeout(6000),
-        })
-        const verifyData = await verifyRes.json()
-        if (verifyData?.valid && verifyData.contactNumber) {
-          contactNumber = verifyData.contactNumber
+        const verifyData = await verifyWithInsurer({ insurerCode, aadhaarHash: consentAadhaarHash, policyId })
+        if (verifyData?.valid && (verifyData.contactNumber || verifyData.email)) {
+          contactNumber = verifyData.contactNumber || null
+          email = verifyData.email || null
           numberSource = 'insurer'
-        }
-        // Same reasoning as the number: the destination must come from the
-        // insurer's record, never from the form the hospital controls.
-        if (verifyData?.valid && verifyData.email) {
-          email = verifyData.email
+        } else if (verifyData && !verifyData.valid) {
+          return res.status(400).json({ error: `The insurer could not confirm this patient's cover: ${verifyData.reason}` })
         }
       } catch (e) {
-        console.warn(`[Consent] Could not reach insurer for the on-record number: ${e.message}`)
+        console.warn(`[Consent] Could not reach the insurer for the contact on record: ${e.message}`)
       }
     }
-    if (!contactNumber) contactNumber = formNumber
+    // Deliver only to destinations the insurer holds. The form number is used
+    // for delivery solely when the insurer has no contact on record at all.
+    const deliveryNumber = numberSource === 'insurer' ? contactNumber : formNumber
+    // Consent records are keyed by a number; an email-only member is keyed by the form number.
+    const recordNumber = contactNumber || formNumber
 
-    if (!contactNumber || !/^\d{10}$/.test(contactNumber)) {
+    if (!recordNumber || !/^\d{10}$/.test(recordNumber)) {
       return res.status(400).json({ error: 'A valid 10-digit contact number is required' })
     }
 
     const otp = generateOtp()
     const expiresAt = new Date(Date.now() + OTP_TTL_MS)
 
-    // One active OTP per contact number at a time — replace any prior unconsumed one
-    await ClaimConsent.deleteMany({ contactNumber, consumed: false })
+    // One active OTP per patient at a time — replace any prior unconsumed one
+    await ClaimConsent.deleteMany({ consumed: false, $or: [{ contactNumber: recordNumber }, ...(consentAadhaarHash ? [{ aadhaarHash: consentAadhaarHash }] : [])] })
     const record = await ClaimConsent.create({
-      contactNumber, otp, expiresAt,
+      contactNumber: recordNumber, otp, expiresAt,
       aadhaarHash: consentAadhaarHash,
       patientName: patientName || '',
       procedureSummary: procedureSummary || '',
     })
+    contactNumber = recordNumber
 
-    const result = await sendOtp(contactNumber, otp, email)
+    const result = await sendOtp(deliveryNumber, otp, email)
 
     let message
     if (result.sent) {

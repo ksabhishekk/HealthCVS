@@ -13,6 +13,7 @@ import ClaimDetail from './pages/claims/ClaimDetail'
 import NewClaim from './pages/claims/NewClaim'
 import StaffList from './pages/admin/StaffList'
 import Insurer from './pages/insurer/Insurer'
+import Analytics from './pages/Analytics'
 
 function AppRoutes() {
   return (
@@ -22,6 +23,7 @@ function AppRoutes() {
 
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/analytics" element={<Analytics />} />
         <Route path="/patients" element={<PatientList />} />
         <Route path="/patients/new" element={<NewPatient />} />
         <Route path="/patients/:id" element={<PatientDetail />} />

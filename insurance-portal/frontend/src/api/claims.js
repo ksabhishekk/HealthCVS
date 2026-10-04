@@ -20,6 +20,9 @@ export const requestInfo     = (id, message, requestedDocuments = []) =>
 export const getSignalAnalytics = () =>
   api.get('/claims/analytics/signals')
 
+export const getAnalyticsOverview = () =>
+  api.get('/claims/analytics/overview')
+
 export const settleClaim     = (id) =>
   api.post(`/claims/${id}/settle`)
 

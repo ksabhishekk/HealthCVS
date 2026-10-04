@@ -7,7 +7,8 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "seed": "node scripts/seed.js",
-    "seed:hospitals": "node scripts/seedHospitals.js"
+    "seed:hospitals": "node scripts/seedHospitals.js",
+    "seed:demo": "node scripts/seedDemoPolicies.js"
   },
   "dependencies": {
     "axios": "^1.18.1",

@@ -1,184 +1,125 @@
-import { ShieldCheck, CheckCircle2, MapPin, Phone, Mail, Globe, Clock, Wifi, FileText, Building2, Star } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ShieldCheck, ShieldX, CheckCircle2, AlertTriangle, Loader2, RefreshCw, Network, Wallet } from 'lucide-react'
+import { getInsurers } from '../../api/claims'
 
-const INSURER = {
-  name: 'Star Health Insurance',
-  code: 'SHI001',
-  tagline: 'Empanelled Insurance Partner',
-  address: '1, New Tank Street, Valluvarkottam High Road, Nungambakkam, Chennai – 600034, Tamil Nadu',
-  phone: '+91 44 2828 8800',
-  toll_free: '1800 425 2255',
-  email: 'info@starhealth.in',
-  claimsEmail: 'claims@starhealth.in',
-  website: 'www.starhealth.in',
-  operatingHours: '24 × 7 — Claims & Customer Care',
-  established: 2006,
-  type: 'Standalone Health Insurer',
-  regNumber: 'IRDAI Reg. No. 129',
-  tpaCode: 'CGH-SHI-2023',
-  partnerSince: '1 April 2023',
-  partnerUntil: 'No expiry',
-  status: 'active',
-  products: [
-    'Star Comprehensive Insurance Policy',
-    'Star Family Health Optima',
-    'Star Senior Citizens Red Carpet',
-    'Star Super Surplus (Floater)',
-    'Medi-Classic Insurance Policy',
-    'Star Critical Illness Multipay',
-    'PM-JAY / Ayushman Bharat (Govt. Scheme)',
-    'Group Health Insurance (Corporate)',
-  ],
-  wallets: [
-    '0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B',
-  ],
-  cashlessLimit: '₹5,00,000',
-  settlementSLA: '7 working days (cashless pre-auth: 1–2 hrs)',
-  irdaiReg: '129',
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'no expiry')
+const EMPANELMENT = {
+  active: { label: 'In the cashless network', style: 'bg-green-100 text-green-700', icon: CheckCircle2 },
+  suspended: { label: 'Empanelment suspended', style: 'bg-red-100 text-red-700', icon: AlertTriangle },
+  expired: { label: 'Empanelment expired', style: 'bg-amber-100 text-amber-800', icon: AlertTriangle },
+  not_empanelled: { label: 'Not empanelled', style: 'bg-gray-100 text-gray-600', icon: AlertTriangle },
 }
 
-const InfoRow = ({ icon: Icon, label, value, mono }) => (
-  <div className="flex items-start gap-3">
-    <div className="w-8 h-8 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center shrink-0 mt-0.5">
-      <Icon className="w-4 h-4 text-gray-500" />
-    </div>
-    <div>
-      <div className="text-xs text-gray-400 font-medium">{label}</div>
-      <div className={`text-sm text-gray-900 font-medium ${mono ? 'font-mono' : ''}`}>{value}</div>
-    </div>
-  </div>
-)
-
+/**
+ * The insurers this hospital files claims with. HealthCVS is one claims
+ * network shared by hospitals and insurers (the model of NHA's National
+ * Health Claims Exchange); each insurer runs its own portal with its own
+ * products. Everything here is read live: each insurer's profile from its
+ * portal, and whether its signing wallet really holds the insurer role from
+ * the blockchain — not taken on the portal's word.
+ */
 export default function Insurer() {
+  const [insurers, setInsurers] = useState(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const load = () => {
+    setLoading(true); setError('')
+    getInsurers()
+      .then(r => setInsurers(r.data.insurers || []))
+      .catch(e => setError(e.response?.data?.error || 'Could not reach the network'))
+      .finally(() => setLoading(false))
+  }
+  useEffect(load, [])
+
   return (
     <div className="w-full">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Insurance Partner</h1>
-        <p className="text-sm text-gray-500 mt-1">
-          City General Hospital is exclusively empanelled with one insurer for the HealthCVS claim verification system.
-        </p>
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Insurance network</h1>
+          <p className="text-sm text-gray-500 mt-1 max-w-3xl">
+            Insurers this hospital files claims with over the shared HealthCVS network. A claim is bound on-chain to the insurer
+            that issued the patient's policy, and only that insurer can approve or settle it. Adding another insurer is
+            configuration, not code.
+          </p>
+        </div>
+        <button className="btn-secondary shrink-0" onClick={load} disabled={loading}>
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        </button>
       </div>
 
-      {/* Hero banner */}
-      <div className="card overflow-hidden mb-6">
-        <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700 px-8 py-10 text-white relative overflow-hidden">
-          {/* Decorative circles */}
-          <div className="absolute -top-8 -right-8 w-48 h-48 rounded-full bg-white/5" />
-          <div className="absolute -bottom-12 -right-4 w-64 h-64 rounded-full bg-white/5" />
-          <div className="absolute top-4 right-40 w-24 h-24 rounded-full bg-white/5" />
+      {error && <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-5 text-sm"><AlertTriangle className="w-4 h-4" /> {error}</div>}
+      {insurers === null && <div className="p-10 text-center text-gray-400 text-sm flex items-center justify-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Contacting insurers…</div>}
+      {insurers?.length === 0 && <div className="card p-10 text-center text-sm text-gray-500">No insurers configured. Set INSURER_NETWORK (or INSURANCE_PORTAL_URL) in the hospital backend.</div>}
 
-          <div className="relative z-10 flex items-start gap-6">
-            <div className="w-20 h-20 bg-white/15 rounded-2xl flex items-center justify-center shrink-0 backdrop-blur-sm border border-white/25">
-              <ShieldCheck className="w-10 h-10 text-white" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-3 flex-wrap mb-1">
-                <h2 className="text-3xl font-bold">{INSURER.name}</h2>
-                <span className="flex items-center gap-1.5 bg-white/20 text-white text-xs px-3 py-1 rounded-full font-semibold backdrop-blur-sm">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Active
-                </span>
-                <span className="flex items-center gap-1.5 bg-blue-400/30 text-white text-xs px-3 py-1 rounded-full font-semibold">
-                  <Star className="w-3 h-3" /> IRDAI Reg. {INSURER.irdaiReg}
-                </span>
-              </div>
-              <p className="text-blue-100 text-sm flex items-center gap-1.5 mb-3">
-                <MapPin className="w-4 h-4 shrink-0" />
-                {INSURER.address}
-              </p>
-              <div className="flex gap-6 text-sm text-blue-100 flex-wrap">
-                <span className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> {INSURER.type}</span>
-                <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Est. {INSURER.established}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-6">
-
-        {/* Left column: Contact & Partnership */}
-        <div className="space-y-6">
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-5">Contact Information</h3>
-            <div className="space-y-4">
-              <InfoRow icon={Phone} label="Head Office" value={INSURER.phone} />
-              <InfoRow icon={Phone} label="Toll-Free" value={INSURER.toll_free} />
-              <InfoRow icon={Mail} label="General Enquiry" value={INSURER.email} />
-              <InfoRow icon={Mail} label="Claims Desk" value={INSURER.claimsEmail} />
-              <InfoRow icon={Globe} label="Website" value={INSURER.website} />
-              <InfoRow icon={Clock} label="Hours" value={INSURER.operatingHours} />
-            </div>
-          </div>
-
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-5">Partnership Status</h3>
-            <div className="space-y-4">
-              <div>
-                <div className="text-xs text-gray-400 mb-1">Current Status</div>
-                <span className="inline-flex items-center gap-1.5 bg-green-100 text-green-700 text-sm font-semibold px-3 py-1 rounded-full">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Active
-                </span>
-              </div>
-              <InfoRow icon={ShieldCheck} label="Insurer Code" value={INSURER.code} mono />
-              <InfoRow icon={FileText} label="TPA Code" value={INSURER.tpaCode} mono />
-              <InfoRow icon={Clock} label="Partner Since" value={INSURER.partnerSince} />
-              <InfoRow icon={Clock} label="Valid Until" value={INSURER.partnerUntil} />
-            </div>
-          </div>
-        </div>
-
-        {/* Middle column: Products */}
-        <div className="space-y-6">
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-5">Insurance Products</h3>
-            <div className="space-y-2">
-              {INSURER.products.map(p => (
-                <div key={p} className="flex items-center gap-2.5 py-2 border-b border-gray-50 last:border-0">
-                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
-                  <span className="text-sm text-gray-700">{p}</span>
+      <div className="space-y-6">
+        {(insurers || []).map(i => {
+          const emp = EMPANELMENT[i.empanelment?.status] || EMPANELMENT.not_empanelled
+          const EmpIcon = emp.icon
+          return (
+            <div key={i.url} className="card overflow-hidden">
+              <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700 px-8 py-7 text-white">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h2 className="text-2xl font-bold">{i.name || i.url}</h2>
+                      {i.code && <span className="text-xs font-semibold bg-white/20 px-3 py-1 rounded-full font-mono">{i.code}</span>}
+                      <span className={`text-xs font-semibold px-3 py-1 rounded-full ${i.reachable ? 'bg-white/20' : 'bg-red-500/80'}`}>{i.reachable ? 'Portal reachable' : 'Unreachable'}</span>
+                    </div>
+                    <p className="text-sm text-blue-100 mt-2 flex items-center gap-1.5"><Network className="w-4 h-4" /> {i.url}</p>
+                  </div>
+                  {i.reachable && (
+                    <span className={`inline-flex items-center gap-1.5 text-sm font-semibold px-3 py-1.5 rounded-full ${emp.style}`}>
+                      <EmpIcon className="w-4 h-4" /> {emp.label}
+                    </span>
+                  )}
                 </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Right column: Claims config & Blockchain */}
-        <div className="space-y-6">
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-5">Claims Configuration</h3>
-            <div className="space-y-4">
-              <InfoRow icon={Mail} label="Claims Email" value={INSURER.claimsEmail} />
-              <div>
-                <div className="text-xs text-gray-400 mb-1">Cashless Claim Limit</div>
-                <div className="text-2xl font-bold text-blue-600">{INSURER.cashlessLimit}</div>
-                <div className="text-xs text-gray-400 mt-0.5">per policy, per annum</div>
               </div>
-              <InfoRow icon={Clock} label="Settlement SLA" value={INSURER.settlementSLA} />
-              <InfoRow icon={FileText} label="IRDAI Reg. No." value={INSURER.regNumber} mono />
-            </div>
-          </div>
 
-          <div className="card p-6">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Blockchain Identity</h3>
-            <p className="text-xs text-gray-500 mb-4">
-              Claim approvals (TX3) from the insurer must be signed by one of the authorized wallets below. This prevents any forged approvals.
-            </p>
-            <div className="flex items-center gap-2 mb-3">
-              <Wifi className="w-4 h-4 text-blue-600" />
-              <span className="text-sm font-semibold text-gray-700">Authorized Signing Wallets</span>
+              {i.reachable ? (
+                <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-1.5"><Wallet className="w-3.5 h-3.5" /> Signing wallet</h3>
+                    <div className="font-mono text-xs text-gray-700 break-all bg-gray-50 border border-gray-100 rounded-lg p-3">{i.wallet}</div>
+                    <p className={`text-xs mt-2 flex items-center gap-1.5 ${i.walletVerifiedOnChain ? 'text-emerald-700' : 'text-red-600'}`}>
+                      {i.walletVerifiedOnChain
+                        ? <><ShieldCheck className="w-3.5 h-3.5" /> Holds INSURER_ROLE on-chain — checked live</>
+                        : <><ShieldX className="w-3.5 h-3.5" /> Does not hold the insurer role on-chain</>}
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-2">Every policy this insurer vouches for during pre-authorisation must have been registered on-chain by this wallet.</p>
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Our empanelment</h3>
+                    {i.empanelment?.status && i.empanelment.status !== 'not_empanelled' ? (
+                      <div className="text-sm text-gray-700 space-y-1">
+                        <div>Listed as <strong>{i.empanelment.name}</strong> (<span className="font-mono">{i.empanelment.code}</span>)</div>
+                        <div className="text-xs text-gray-500">Since {fmtDate(i.empanelment.since)} · valid until {fmtDate(i.empanelment.until)}</div>
+                        <div className={`text-xs ${i.empanelment.walletRegistered ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {i.empanelment.walletRegistered ? '✓ Our signing wallet is registered with this insurer' : '✗ Our signing wallet is not registered — our claims will be flagged'}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500">This hospital is not in the insurer's cashless network — its claims would be flagged as "hospital not verified".</p>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Policies it issues</h3>
+                    <ul className="space-y-2">
+                      {(i.products || []).map(p => (
+                        <li key={p.value} className="text-sm">
+                          <div className="font-medium text-gray-800">{p.label}</div>
+                          <div className="text-xs text-gray-500">{p.poolLabel}{p.waitingPeriodDays ? ` · ${p.waitingPeriodDays}-day waiting period` : ' · no waiting period'}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 text-sm text-red-600">{i.error}</div>
+              )}
             </div>
-            {INSURER.wallets.map((w, i) => (
-              <div key={i} className="bg-gray-50 border border-gray-100 rounded-lg p-3 mb-2">
-                <div className="font-mono text-xs text-gray-700 break-all">{w}</div>
-              </div>
-            ))}
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-gray-400">
-              <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
-              Verified on Blockchain
-            </div>
-          </div>
-        </div>
-
+          )
+        })}
       </div>
     </div>
   )

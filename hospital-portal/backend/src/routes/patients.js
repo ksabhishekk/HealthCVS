@@ -1,6 +1,6 @@
 const express = require('express')
 const { body, validationResult } = require('express-validator')
-const { isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE } = require('../services/aadhaar')
+const { isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE, isIndividualPan, PAN_INVALID_MESSAGE } = require('../services/aadhaar')
 const { ethers } = require('ethers')
 const { authenticate } = require('../middleware/auth')
 const Patient = require('../models/Patient')
@@ -58,6 +58,9 @@ router.post('/',
     const { aadhaarNumber, ...rest } = req.body
     if (aadhaarChecksumEnforced() && !isValidAadhaar(aadhaarNumber)) {
       return res.status(400).json({ error: AADHAAR_INVALID_MESSAGE })
+    }
+    if (rest.panNumber && !isIndividualPan(rest.panNumber)) {
+      return res.status(400).json({ error: PAN_INVALID_MESSAGE })
     }
     try {
       const aadhaarHash = ethers.keccak256(ethers.toUtf8Bytes(aadhaarNumber))

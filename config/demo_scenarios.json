@@ -1,0 +1,169 @@
+{
+  "_comment": "Demo data for evaluations. Read by insurance-portal/backend/scripts/seedDemoPolicies.js (enrols the policies on-chain) and notes/demo_documents/generate.py (renders the claim documents). Everyone here is fictional; Aadhaar numbers pass the Verhoeff checksum but belong to no one, and identity documents are rendered as marked specimens. 'emailTag' becomes a plus-address of the presenter's consent inbox (DEMO_CONSENT_EMAIL), so every household has its own address and every consent code still reaches one inbox.",
+
+  "hospital": { "name": "City General Hospital", "code": "CGH001" },
+  "doctor": { "name": "Bhupendranath Gupta Bhaya", "registrationNumber": "5002", "department": "General Surgery" },
+
+  "policies": [
+    {
+      "key": "individual",
+      "policyId": "SHI-IND-2026-000101",
+      "policyType": "individual",
+      "planName": "Health Shield Individual",
+      "sumInsured": 500000, "copayPercent": 0, "waitingPeriodDays": 30,
+      "startDate": "2026-04-01", "endDate": "2027-03-31",
+      "proposer": { "name": "Rohan Mehta", "emailTag": "mehta" },
+      "members": [
+        { "key": "rohan", "name": "Rohan Mehta", "aadhaarNumber": "739248160522", "dateOfBirth": "1990-08-15", "gender": "male", "relationship": "self", "panNumber": "BKZPM4821K" }
+      ]
+    },
+    {
+      "key": "family",
+      "policyId": "SHI-FFL-2026-000101",
+      "policyType": "family_floater",
+      "planName": "Health Shield Family Floater",
+      "sumInsured": 40000, "copayPercent": 0, "waitingPeriodDays": 30,
+      "startDate": "2026-04-01", "endDate": "2027-03-31",
+      "proposer": { "name": "Vikram Sharma", "emailTag": "sharma" },
+      "members": [
+        { "key": "vikram", "name": "Vikram Sharma", "aadhaarNumber": "462719385048", "dateOfBirth": "1984-03-12", "gender": "male", "relationship": "self", "panNumber": "DHMPS2468J" },
+        { "key": "priya", "name": "Priya Sharma", "aadhaarNumber": "462719385179", "dateOfBirth": "1987-11-02", "gender": "female", "relationship": "spouse", "panNumber": "EPXPS9137D" },
+        { "key": "aarav", "name": "Aarav Sharma", "aadhaarNumber": "462719385292", "dateOfBirth": "2014-05-02", "gender": "male", "relationship": "son" }
+      ]
+    },
+    {
+      "key": "corporate",
+      "policyId": "SHI-COR-2026-000101",
+      "policyType": "corporate",
+      "planName": "Group Mediclaim — Employees",
+      "sumInsured": 300000, "copayPercent": 0, "waitingPeriodDays": 0,
+      "startDate": "2026-04-01", "endDate": "2027-03-31",
+      "corporate": { "companyName": "Acme Technologies Pvt Ltd", "companyPan": "AAKCA5821M", "gstin": "27AAKCA5821M1ZC" },
+      "members": [
+        { "key": "neha", "name": "Neha Kulkarni", "aadhaarNumber": "618392740154", "dateOfBirth": "1992-07-19", "gender": "female", "relationship": "self", "employeeId": "EMP-1042", "panNumber": "GRWPK3076N", "emailTag": "neha" },
+        { "key": "suresh", "name": "Suresh Kulkarni", "aadhaarNumber": "618392740274", "dateOfBirth": "1961-02-10", "gender": "male", "relationship": "father", "employeeId": "EMP-1042", "panNumber": "HSNPK8152C" },
+        { "key": "rahul", "name": "Rahul Desai", "aadhaarNumber": "527481930625", "dateOfBirth": "1988-09-30", "gender": "male", "relationship": "self", "employeeId": "EMP-1077", "panNumber": "JTVPD6248E", "emailTag": "rahul", "suspend": "Left Acme Technologies on 2026-09-15" }
+      ]
+    },
+    {
+      "key": "group",
+      "policyId": "SHI-GRP-2026-000101",
+      "policyType": "group",
+      "planName": "Teachers' Welfare Group Health",
+      "sumInsured": 200000, "copayPercent": 10, "waitingPeriodDays": 30,
+      "startDate": "2026-04-01", "endDate": "2027-03-31",
+      "group": { "groupName": "Pune Teachers' Welfare Association", "groupType": "Association" },
+      "members": [
+        { "key": "anil", "name": "Anil Verma", "aadhaarNumber": "582137496018", "dateOfBirth": "1985-03-22", "gender": "male", "relationship": "self", "groupMemberId": "GM-00118", "panNumber": "CQLPV7314R", "emailTag": "anil" },
+        { "key": "kavita", "name": "Kavita Joshi", "aadhaarNumber": "849261573086", "dateOfBirth": "1990-12-05", "gender": "female", "relationship": "self", "groupMemberId": "GM-00231", "panNumber": "KUMPJ1593F", "emailTag": "kavita", "joinedMidTerm": "2026-09-25" }
+      ]
+    },
+    {
+      "key": "pmjay",
+      "policyId": "SHI-GOV-2026-000101",
+      "policyType": "government",
+      "planName": "AB PM-JAY (Maharashtra)",
+      "sumInsured": 500000, "copayPercent": 0, "waitingPeriodDays": 0,
+      "startDate": "2026-04-01", "endDate": "2027-03-31",
+      "proposer": { "name": "Ramesh Yadav", "emailTag": "yadav" },
+      "scheme": { "familyId": "MH7K2Q9P4", "rationCardNumber": "271234567890", "state": "Maharashtra" },
+      "members": [
+        { "key": "ramesh", "name": "Ramesh Yadav", "aadhaarNumber": "395746182013", "dateOfBirth": "1975-06-01", "gender": "male", "relationship": "self", "pmjayId": "PJ4K7Q2ZM", "panNumber": "LWXPY4826G" },
+        { "key": "sunita", "name": "Sunita Yadav", "aadhaarNumber": "395746182130", "dateOfBirth": "1979-09-14", "gender": "female", "relationship": "spouse", "pmjayId": "PJ8N3R5TX" }
+      ]
+    },
+    {
+      "key": "neha_individual",
+      "policyId": "SHI-IND-2026-000102",
+      "policyType": "individual",
+      "planName": "Health Shield Individual",
+      "sumInsured": 300000, "copayPercent": 0, "waitingPeriodDays": 30,
+      "startDate": "2026-04-01", "endDate": "2027-03-31",
+      "proposer": { "name": "Neha Kulkarni", "emailTag": "neha" },
+      "members": [
+        { "key": "neha", "name": "Neha Kulkarni", "aadhaarNumber": "618392740154", "dateOfBirth": "1992-07-19", "gender": "female", "relationship": "self", "panNumber": "GRWPK3076N" }
+      ]
+    }
+  ],
+
+  "diagnoses": {
+    "appendicitis": {
+      "diagnosis": "Acute appendicitis", "icdCode": "K35.80", "icdDescription": "Unspecified acute appendicitis",
+      "procedureCode": "S050002", "procedureName": "Appendectomy",
+      "complaint": "pain in the right lower abdomen, nausea and fever for one day",
+      "examination": "tenderness and rebound tenderness at McBurney point, temperature 100.8 F",
+      "rx": ["Inj Ceftriaxone 1 g IV twice daily", "Inj Metronidazole 500 mg IV three times daily"],
+      "advice": "admission for laparoscopic appendectomy under general anaesthesia",
+      "labs": [["Total WBC count", "14,800", "/cumm", "4,000 - 11,000"], ["Neutrophils", "84", "%", "40 - 75"], ["C-reactive protein", "46", "mg/L", "below 6"], ["Haemoglobin", "13.9", "g/dL", "13.0 - 17.0"]],
+      "imaging": "Ultrasound abdomen: non-compressible appendix, 9 mm, with periappendiceal fluid",
+      "impression": "findings consistent with acute appendicitis"
+    },
+    "gallstones": {
+      "diagnosis": "Cholelithiasis with biliary colic", "icdCode": "K80.20", "icdDescription": "Calculus of gallbladder without cholecystitis without obstruction",
+      "procedureCode": "S060002", "procedureName": "Cholecystectomy (Gallbladder Removal)",
+      "complaint": "recurrent pain in the right upper abdomen after fatty meals for three weeks, with nausea",
+      "examination": "tenderness in the right upper quadrant, Murphy sign negative, afebrile",
+      "rx": ["Tab Pantoprazole 40 mg once daily", "Inj Drotaverine 40 mg IV when required for pain"],
+      "advice": "admission for laparoscopic cholecystectomy under general anaesthesia",
+      "labs": [["Total bilirubin", "1.1", "mg/dL", "0.2 - 1.2"], ["Alkaline phosphatase", "128", "U/L", "44 - 147"], ["SGPT (ALT)", "38", "U/L", "7 - 56"], ["Haemoglobin", "13.2", "g/dL", "13.0 - 17.0"]],
+      "imaging": "Ultrasound abdomen: multiple gallbladder calculi, largest 12 mm, normal common bile duct",
+      "impression": "findings consistent with cholelithiasis (gallstones)"
+    },
+    "hernia": {
+      "diagnosis": "Right inguinal hernia", "icdCode": "K40.90", "icdDescription": "Unilateral inguinal hernia, without obstruction or gangrene",
+      "procedureCode": "S060001", "procedureName": "Hernia Repair",
+      "complaint": "swelling in the right groin for four months, increasing on standing and coughing",
+      "examination": "reducible swelling in the right inguinal region with positive cough impulse",
+      "rx": ["Tab Paracetamol 650 mg when required", "Inj Cefuroxime 1.5 g IV at induction"],
+      "advice": "admission for open inguinal hernia repair with mesh",
+      "labs": [["Haemoglobin", "13.6", "g/dL", "12.0 - 17.0"], ["Total WBC count", "7,900", "/cumm", "4,000 - 11,000"], ["Random blood sugar", "104", "mg/dL", "70 - 140"], ["Serum creatinine", "0.9", "mg/dL", "0.6 - 1.3"]],
+      "imaging": "Ultrasound groin: right inguinal hernia with a 1.8 cm defect containing omentum",
+      "impression": "findings consistent with right inguinal hernia"
+    },
+    "obstructed_labour": {
+      "diagnosis": "Obstructed labour", "icdCode": "O66.9", "icdDescription": "Obstructed labor, unspecified",
+      "procedureCode": "S060004", "procedureName": "C-Section Delivery",
+      "complaint": "labour pains for eighteen hours with no progress of labour",
+      "examination": "cervix 6 cm dilated for six hours, fetal head not descending",
+      "rx": ["Inj Oxytocin as per protocol", "Inj Cefazolin 2 g IV before incision"],
+      "advice": "emergency lower segment caesarean section",
+      "labs": [["Haemoglobin", "11.2", "g/dL", "11.0 - 15.0"], ["Platelet count", "2.1", "lakh/cumm", "1.5 - 4.5"], ["Blood group", "B positive", "", ""], ["Random blood sugar", "96", "mg/dL", "70 - 140"]],
+      "imaging": "Obstetric ultrasound: single live fetus, cephalic presentation, no descent",
+      "impression": "findings consistent with obstructed labour"
+    }
+  },
+
+  "claims": [
+    { "id": "A1", "title": "Individual — clean claim, settled in full", "policy": "individual", "member": "rohan", "diagnosis": "appendicitis", "amount": 20000, "billed": 20000, "admission": "2026-09-10", "discharge": "2026-09-13", "billNo": "CGH-2026-0913-001",
+      "expect": "Low AI score, no findings. TX5 approves, TX6 approve in full, TX7 settles Rs 20,000. Rohan's own Rs 5 lakh sum insured drops to Rs 4,80,000." },
+    { "id": "F1", "title": "Family floater — child's claim draws the shared sum insured", "policy": "family", "member": "aarav", "diagnosis": "appendicitis", "amount": 20000, "billed": 20000, "admission": "2026-09-15", "discharge": "2026-09-18", "billNo": "CGH-2026-0918-004",
+      "expect": "Clean. After TX6 the family's shared Rs 40,000 floater has Rs 20,000 left — visible on every family member." },
+    { "id": "F2", "title": "Family floater — cover running out", "policy": "family", "member": "vikram", "diagnosis": "gallstones", "amount": 30000, "billed": 30000, "admission": "2026-09-22", "discharge": "2026-09-25", "billNo": "CGH-2026-0925-007", "after": "F1",
+      "expect": "Run after F1 is approved. TX5 flags 'Claim exceeds the remaining sum insured' and recommends Rs 20,000. Approving more than Rs 20,000 is refused on-chain." },
+    { "id": "C1", "title": "Corporate — employee's father, covered through her", "policy": "corporate", "member": "suresh", "diagnosis": "hernia", "amount": 25000, "billed": 25000, "admission": "2026-09-18", "discharge": "2026-09-20", "billNo": "CGH-2026-0920-005", "memberRef": "EMP-1042",
+      "expect": "Clean. Employee ID EMP-1042 matches. Draws the employee family's Rs 3 lakh pool, not other employees'." },
+    { "id": "C3", "title": "Corporate — wrong employee ID", "policy": "corporate", "member": "suresh", "diagnosis": "gallstones", "amount": 30000, "billed": 30000, "admission": "2026-09-29", "discharge": "2026-10-01", "billNo": "CGH-2026-1001-009", "memberRef": "EMP-1024",
+      "expect": "Verify step warns the employee ID does not match; if submitted anyway the oracle raises 'Employee ID does not match' (75) and TX5 flags it." },
+    { "id": "G1", "title": "Group (association) — co-payment", "policy": "group", "member": "anil", "diagnosis": "hernia", "amount": 25000, "billed": 25000, "admission": "2026-09-12", "discharge": "2026-09-14", "billNo": "CGH-2026-0914-003", "memberRef": "GM-00118",
+      "expect": "Clean. TX5 approves with co-payment applied: recommends Rs 22,500 (10% paid by the member). Approve Rs 22,500 → partial settlement." },
+    { "id": "G2", "title": "Group — illness inside the 30-day waiting period", "policy": "group", "member": "kavita", "diagnosis": "appendicitis", "amount": 20000, "billed": 20000, "admission": "2026-10-01", "discharge": "2026-10-03", "billNo": "CGH-2026-1003-011", "memberRef": "GM-00231",
+      "expect": "Kavita joined on 25 Sep. Admitted 6 days later for an illness → 'Inside the initial waiting period' (75) → TX5 flags it; reject as not payable. Marking the cause 'Accident' instead clears it." },
+    { "id": "P1", "title": "PM-JAY — billed above the package rate", "policy": "pmjay", "member": "ramesh", "diagnosis": "hernia", "amount": 32000, "billed": 32000, "admission": "2026-09-05", "discharge": "2026-09-08", "billNo": "CGH-2026-0908-002", "memberRef": "PJ4K7Q2ZM",
+      "expect": "TX5 flags 'exceeds PM-JAY HBP ceiling' and recommends the Rs 25,000 package rate; approve Rs 25,000. Under PM-JAY the hospital may not charge the family the difference." },
+    { "id": "X1", "title": "Fraud — someone else's ID card and an inflated amount", "policy": "individual", "member": "rohan", "diagnosis": "appendicitis", "amount": 60000, "reuse": "A1", "kycOf": "anil", "admission": "2026-09-10", "discharge": "2026-09-13",
+      "expect": "ID card belongs to another person (75), claim is 3x the bill (75), same bill file already used on claim A1 (75) → score ~90, flagged." },
+    { "id": "X2", "title": "Fraud — maternity claim for a man", "policy": "family", "member": "vikram", "diagnosis": "obstructed_labour", "amount": 25000, "billed": 25000, "admission": "2026-09-28", "discharge": "2026-09-30", "billNo": "CGH-2026-0930-008",
+      "expect": "C-section for a member the insurer records as male (75), plus a general surgeon treating an obstetric diagnosis (60) → flagged." },
+    { "id": "X3", "title": "Fraud — claim for someone else on a member's Aadhaar", "policy": "family", "member": "priya", "diagnosis": "hernia", "amount": 25000, "billed": 25000, "admission": "2026-09-08", "discharge": "2026-09-10", "billNo": "CGH-2026-0910-006", "enterAs": { "name": "Pooja Sharma", "dateOfBirth": "1995-01-01", "gender": "female" },
+      "expect": "The clerk enters 'Pooja Sharma, born 1995' against Priya's Aadhaar. Name and date of birth do not match the insurer's record (75) → flagged." },
+    { "id": "X4", "title": "Fraud — one hospitalisation claimed under two policies", "policy": "corporate", "member": "neha", "diagnosis": "appendicitis", "amount": 20000, "billed": 20000, "admission": "2026-09-26", "discharge": "2026-09-29", "billNo": "CGH-2026-0929-010", "memberRef": "EMP-1042", "secondPolicy": "neha_individual",
+      "expect": "File once under Acme's corporate policy, then again under Neha's own individual policy with the same bill. The second claim shows 'Same admission claimed under another policy' (60) and 'Same bill already used on another claim' (75)." }
+  ],
+
+  "blocked": [
+    { "id": "C2", "title": "Corporate — employee who has left", "policy": "corporate", "member": "rahul", "admission": "2026-09-27",
+      "expect": "Rahul is suspended (left the company). 'Verify with insurer' answers 'member is suspended'; the contract refuses TX2 even if the hospital tried." },
+    { "id": "G3", "title": "Treatment before cover began", "policy": "group", "member": "kavita", "admission": "2026-09-20",
+      "expect": "Kavita joined on 25 Sep; an admission on 20 Sep is outside her cover period — the classic 'buy the policy after falling ill'. Verify refuses, and so does the contract at TX2." }
+  ]
+}

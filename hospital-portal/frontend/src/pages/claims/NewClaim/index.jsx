@@ -24,11 +24,11 @@ const INITIAL = {
 
   // Step 2
   insurance: {
-    company: '', policyNumber: '', policyType: '',
-    isProposerDifferent: false, proposerName: '', proposerAadhaarLast4: '', proposerPan: '',
-    employeeId: '', employerName: '',
-    // policy verification result (not sent to backend)
-    _verified: false, _coverageAmount: null, _expiryDate: null,
+    insurerCode: '', policyNumber: '', memberRef: '',
+    // filled in from the insurer's answer, not chosen by the clerk
+    company: '', policyType: '', isProposerDifferent: false,
+    // the insurer's pre-authorisation answer (not sent to backend)
+    _verification: null,
   },
 
   // Step 3 — multi-doctor, multi-procedure
@@ -37,6 +37,8 @@ const INITIAL = {
     diagnosis: '',
     icdCode: '',
     procedures: [],   // [{ code, name, claimedAmount }]
+    hospitalisationCause: 'illness',   // illness | accident | maternity
+    mlcNumber: '',
     isTransferCase: false,
     transferHospitalName: '',
     isPlannedSurgery: false,
@@ -65,8 +67,8 @@ export default function NewClaim() {
     setSubmitting(true)
     setError('')
     try {
-      // Strip internal _verified fields before sending
-      const { _verified, _coverageAmount, _expiryDate, ...insurance } = data.insurance
+      // The verification answer stays in the browser; the backend asks the insurer itself.
+      const { _verification, ...insurance } = data.insurance
 
       const payload = {
         aadhaarHash: data.aadhaarHash || undefined,

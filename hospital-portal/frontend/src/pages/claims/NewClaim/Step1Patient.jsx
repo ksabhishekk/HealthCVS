@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Search, UserPlus, User, CheckCircle2 } from 'lucide-react'
 import { lookupPatient } from '../../../api/patients'
-import { isValidAadhaar, AADHAAR_INVALID_MESSAGE } from '../../../lib/aadhaar'
+import { isValidAadhaar, AADHAAR_INVALID_MESSAGE, isIndividualPan, PAN_INVALID_MESSAGE } from '../../../lib/aadhaar'
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown']
 
@@ -55,6 +55,7 @@ export default function Step1Patient({ data, update, onNext }) {
   const canProceed = () => {
     if (!data.admission.admissionDate || !/^\d{10}$/.test(data.admission.contactNumber || '')) return false
     if (mode === 'new' && (!newPatient.name || !newPatient.dateOfBirth || !newPatient.gender || !/^\d{10}$/.test(newPatient.contactNumber) || !isValidAadhaar(aadhaar))) return false
+    if (mode === 'new' && newPatient.panNumber && !isIndividualPan(newPatient.panNumber)) return false
     return data.patient !== null || (mode === 'new' && newPatient.name)
   }
 
@@ -132,7 +133,10 @@ export default function Step1Patient({ data, update, onNext }) {
             </div>
             <div>
               <label className="label">PAN Number</label>
-              <input className="input font-mono uppercase" value={newPatient.panNumber} onChange={e => setNew('panNumber', e.target.value.toUpperCase())} placeholder="ABCDE1234F" />
+              <input className="input font-mono uppercase" value={newPatient.panNumber} onChange={e => setNew('panNumber', e.target.value.toUpperCase().slice(0, 10))} placeholder="ABCPE1234F" />
+              {newPatient.panNumber.length === 10 && !isIndividualPan(newPatient.panNumber) && (
+                <p className="text-xs text-red-600 mt-1">{PAN_INVALID_MESSAGE}</p>
+              )}
             </div>
             <div>
               <label className="label">Date of Birth <span className="text-red-500">*</span></label>

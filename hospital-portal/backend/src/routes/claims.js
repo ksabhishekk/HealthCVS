@@ -4,11 +4,15 @@ const {
   submitClaimToBlockchain,
   authenticateClaimOnBlockchain,
   getContracts,
+  policyKeyOf,
+  isOurClaim,
 } = require('../services/blockchain')
+const { verifyWithInsurer } = require('./insurance')
+const { insurerForWallet, insurerGet } = require('../services/insurers')
 const { uploadToPinata, ipfsGatewayUrl } = require('../services/pinata')
 const Patient = require('../models/Patient')
 const ClaimConsent = require('../models/ClaimConsent')
-const { isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE } = require('../services/aadhaar')
+const { isValidAadhaar, aadhaarChecksumEnforced, AADHAAR_INVALID_MESSAGE, isIndividualPan, PAN_INVALID_MESSAGE } = require('../services/aadhaar')
 
 const router = express.Router()
 router.use(authenticate)
@@ -26,6 +30,17 @@ const fetchClaimMetadata = async (cid) => {
   }
 }
 
+// Every claim on the chain filed by this hospital's wallet.
+async function ourClaimsOnChain() {
+  const { claimSubmission } = getContracts()
+  if (!claimSubmission) return []
+  const total = Number(await claimSubmission.getTotalClaims())
+  const all = await Promise.all(
+    Array.from({ length: total }, (_, i) => i + 1).map(id => claimSubmission.getClaim(id).catch(() => null))
+  )
+  return all.filter(c => c && isOurClaim(c))
+}
+
 // Helper: enrich a raw on-chain claim object
 const enrichClaim = async (onChainClaim, includeMetadata = false) => {
   const id = Number(onChainClaim.claimId)
@@ -39,6 +54,9 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
     patientAadhaarHash: aadhaarHash,
     patientName: patient?.name || null,
     patientId: patient?._id || null,
+    policyKey: onChainClaim.policyKey,
+    insurer: onChainClaim.insurer,
+    admissionDate: Number(onChainClaim.admissionDate) * 1000,
     procedureCode: onChainClaim.procedureCode,
     claimedAmount: Number(onChainClaim.claimedAmount),
     cidBill: onChainClaim.cidBill,
@@ -58,31 +76,18 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
       base.metadata = await fetchClaimMetadata(onChainClaim.cidDischarge)
     }
 
-    // Fetch review notes from insurance portal (server-to-server)
-    if (process.env.INSURANCE_PORTAL_URL) {
+    // The insurer this claim is bound to on-chain: its review notes and any
+    // requests for more information, server-to-server.
+    const insurer = await insurerForWallet(onChainClaim.insurer).catch(() => null)
+    if (insurer) {
+      base.insurerName = insurer.profile?.name || null
       try {
-        const notesRes = await fetch(`${process.env.INSURANCE_PORTAL_URL}/api/claims/${id}/review-notes`, {
-          headers: { 'x-api-key': process.env.INSURANCE_API_KEY || '' },
-          signal: AbortSignal.timeout(4000)
-        })
-        if (notesRes.ok) {
-          const notesData = await notesRes.json()
-          base.reviewNotes = notesData.reviewNotes
-        }
+        base.reviewNotes = (await insurerGet(insurer, `/api/claims/${id}/review-notes`)).reviewNotes
       } catch (err) {
-        console.warn(`[Hospital] Could not fetch review notes from insurance portal: ${err.message}`)
+        console.warn(`[Hospital] Could not fetch review notes from the insurer: ${err.message}`)
       }
-    }
-
-    // Open requests for more information from the insurer, so the hospital can
-    // answer them instead of the claim stalling with no explanation.
-    if (process.env.INSURANCE_PORTAL_URL) {
       try {
-        const reqRes = await fetch(`${process.env.INSURANCE_PORTAL_URL}/api/claims/${id}/info-requests`, {
-          headers: { 'x-api-key': process.env.INSURANCE_API_KEY || '' },
-          signal: AbortSignal.timeout(4000),
-        })
-        if (reqRes.ok) base.infoRequests = (await reqRes.json()).infoRequests || []
+        base.infoRequests = (await insurerGet(insurer, `/api/claims/${id}/info-requests`)).infoRequests || []
       } catch (err) {
         console.warn(`[Hospital] Could not fetch information requests: ${err.message}`)
       }
@@ -111,20 +116,8 @@ router.get('/', async (req, res) => {
       return res.json({ claims: [], total: 0, message: 'ClaimSubmission contract not deployed yet' })
     }
 
-    const total = Number(await claimSubmission.getTotalClaims())
-    if (total === 0) return res.json({ claims: [], total: 0 })
-
-    const claims = await Promise.all(
-      Array.from({ length: total }, (_, i) => i + 1).map(async (id) => {
-        try {
-          const onChain = await claimSubmission.getClaim(id)
-          return enrichClaim(onChain, false)
-        } catch {
-          return null
-        }
-      })
-    )
-
+    const ours = await ourClaimsOnChain()
+    const claims = await Promise.all(ours.map(c => enrichClaim(c, false).catch(() => null)))
     const valid = claims.filter(Boolean).reverse() // newest first
     res.json({ claims: valid, total: valid.length })
   } catch (err) {
@@ -140,19 +133,7 @@ router.get('/stats', async (req, res) => {
       return res.json({ total: 0, submitted: 0, settled: 0, flagged: 0, rejected: 0, pending: 0 })
     }
 
-    const total = Number(await claimSubmission.getTotalClaims())
-    if (total === 0) {
-      return res.json({ total: 0, submitted: 0, doctor_authenticated: 0, fraud_scored: 0, adjudicated: 0, insurer_reviewed: 0, settled: 0, flagged: 0, rejected: 0, pending: 0 })
-    }
-
-    const statuses = (await Promise.all(
-      Array.from({ length: total }, (_, i) => i + 1).map(async (id) => {
-        try {
-          const onChain = await claimSubmission.getClaim(id)
-          return Number(onChain.status)
-        } catch { return null }
-      })
-    )).filter(s => s !== null)
+    const statuses = (await ourClaimsOnChain()).map(c => Number(c.status))
 
     res.json({
       total: statuses.length,
@@ -171,6 +152,16 @@ router.get('/stats', async (req, res) => {
   }
 })
 
+// GET /api/claims/analytics — everything the Analytics page charts
+router.get('/analytics', async (req, res) => {
+  try {
+    const { buildHospitalAnalytics } = require('../services/analytics')
+    res.json(await buildHospitalAnalytics())
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/claims/:id — single claim with full IPFS metadata
 router.get('/:id', async (req, res) => {
   try {
@@ -178,6 +169,8 @@ router.get('/:id', async (req, res) => {
     if (!claimSubmission) return res.status(503).json({ error: 'ClaimSubmission contract not deployed' })
 
     const onChain = await claimSubmission.getClaim(req.params.id)
+    if (!Number(onChain.claimId)) return res.status(404).json({ error: 'Claim not found' })
+    if (!isOurClaim(onChain)) return res.status(404).json({ error: 'This claim was filed by another hospital' })
     const claim = await enrichClaim(onChain, true)
     res.json({ claim })
   } catch (err) {
@@ -204,6 +197,10 @@ router.post('/submit', async (req, res) => {
     if (claimData.aadhaarNumber && aadhaarChecksumEnforced() && !isValidAadhaar(claimData.aadhaarNumber)) {
       const existingPatient = await Patient.findOne({ aadhaarHash }).lean()
       if (!existingPatient) return res.status(400).json({ error: AADHAAR_INVALID_MESSAGE })
+    }
+    if (claimData.patient?.panNumber && !isIndividualPan(claimData.patient.panNumber)) {
+      const existingPatient = await Patient.findOne({ aadhaarHash }).lean()
+      if (!existingPatient) return res.status(400).json({ error: PAN_INVALID_MESSAGE })
     }
 
     // --- Patient consent gate (hospital-patient collusion mitigation) ---
@@ -278,40 +275,50 @@ router.post('/submit', async (req, res) => {
     const totalClaimedAmount = procedures.reduce((sum, p) => sum + Number(p.claimedAmount), 0)
     if (totalClaimedAmount <= 0) return res.status(400).json({ error: 'Claimed amount must be greater than zero' })
 
-    // --- Policy verification against insurance portal (pre-flight, no gas) ---
+    // --- Pre-authorisation with the patient's insurer (no gas) ---
+    // Catches an invalid policy before spending a transaction and gives the
+    // clerk a clear reason. The contract enforces cover again at TX2, so if
+    // the insurer is unreachable the claim can still go on-chain.
+    if (!claimData.insurance?.policyNumber) return res.status(400).json({ error: 'Policy number is required' })
+    if (!admissionDate) return res.status(400).json({ error: 'Admission date is required' })
     const policyWarnings = []
-    if (process.env.INSURANCE_PORTAL_URL && claimData.insurance?.policyNumber && claimData.insurance?.company) {
-      try {
-        const verifyRes = await fetch(`${process.env.INSURANCE_PORTAL_URL}/api/policy/verify`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.INSURANCE_API_KEY || '' },
-          body: JSON.stringify({ aadhaarHash, policyId: claimData.insurance.policyNumber, insuranceCompany: claimData.insurance.company }),
-          signal: AbortSignal.timeout(6000),
-        })
-        const verifyData = await verifyRes.json()
-        if (!verifyData.valid) {
-          return res.status(400).json({ error: `Policy verification failed: ${verifyData.reason}` })
-        }
-        if (!verifyData.isPolicyActive) {
-          return res.status(400).json({ error: 'Policy is inactive. Cannot file a claim against an expired policy.' })
-        }
-        if (verifyData.coverageAmount && totalClaimedAmount > verifyData.coverageAmount) {
-          policyWarnings.push(`Claimed amount (₹${totalClaimedAmount}) exceeds policy coverage (₹${verifyData.coverageAmount})`)
-        }
-      } catch (verifyErr) {
-        // Insurance portal unreachable — log and continue (don't block claim submission)
-        console.warn('Policy verification skipped (insurance portal unreachable):', verifyErr.message)
-        policyWarnings.push('Policy verification skipped — insurance portal unreachable at submission time')
+    let verified = null
+    try {
+      verified = await verifyWithInsurer({
+        insurerCode: claimData.insurance.insurerCode,
+        aadhaarHash,
+        policyId: claimData.insurance.policyNumber,
+        admissionDate: claimData.admission.admissionDate,
+        patient: { name: claimData.patient?.name, dateOfBirth: claimData.patient?.dateOfBirth, gender: claimData.patient?.gender },
+        memberRef: claimData.insurance.memberRef,
+      })
+      if (!verified.valid) {
+        return res.status(400).json({ error: `The insurer did not confirm cover: ${verified.reason}` })
       }
+      if (verified.remaining != null && totalClaimedAmount > verified.remaining) {
+        policyWarnings.push(`Claimed ₹${totalClaimedAmount.toLocaleString('en-IN')} is more than the ₹${verified.remaining.toLocaleString('en-IN')} left of the sum insured — the insurer can pay at most the remainder.`)
+      }
+    } catch (verifyErr) {
+      console.warn('Pre-authorisation skipped (insurer unreachable):', verifyErr.message)
+      policyWarnings.push('The insurer could not be reached for pre-authorisation; cover will be checked on-chain.')
     }
+    const policyId = verified?.policyId || String(claimData.insurance.policyNumber).trim().toUpperCase()
 
     // --- Build IPFS metadata bundle ---
     const metadataBundle = {
-      v: 2,
+      v: 3,
       hospital: { name: process.env.HOSPITAL_NAME, code: process.env.HOSPITAL_CODE },
+      insurer: verified?.insurer || { code: claimData.insurance.insurerCode || null },
       patient: claimData.patient,
       admission: claimData.admission,
-      insurance: claimData.insurance,
+      insurance: {
+        ...claimData.insurance,
+        policyNumber: policyId,
+        company: verified?.insurer?.name || claimData.insurance.company || null,
+        policyType: verified?.policyType || claimData.insurance.policyType || null,
+        memberId: verified?.member?.memberId || null,
+        relationship: verified?.member?.relationship || null,
+      },
       medical: {
         doctors,
         diagnosis: claimData.medical.diagnosis,
@@ -319,6 +326,9 @@ router.post('/submit', async (req, res) => {
         procedures,
         primaryProcedureCode: primaryProcedure.code,
         totalClaimedAmount,
+        // illness | accident | maternity — accidents are payable inside the initial waiting period
+        hospitalisationCause: claimData.medical.hospitalisationCause || 'illness',
+        mlcNumber: claimData.medical.mlcNumber || '',
         isTransferCase: claimData.medical.isTransferCase,
         transferHospitalName: claimData.medical.transferHospitalName,
         isPlannedSurgery: claimData.medical.isPlannedSurgery,
@@ -343,8 +353,10 @@ router.post('/submit', async (req, res) => {
     // --- TX2: submit to blockchain ---
     const { txHash, blockchainClaimId } = await submitClaimToBlockchain({
       aadhaarHash,
+      policyKey: policyKeyOf(policyId),
       procedureCode: primaryProcedure.code,
       claimedAmount: totalClaimedAmount,
+      admissionDate: claimData.admission.admissionDate,
       cidBill,
       cidPrescription,
       cidDischarge,
@@ -379,8 +391,8 @@ router.post('/submit', async (req, res) => {
 
       const set = {}
       if (claimData.insurance?.policyNumber) {
-        set.activePolicyId = claimData.insurance.policyNumber
-        set.activeInsuranceCompany = claimData.insurance.company
+        set.activePolicyId = policyId
+        set.activeInsuranceCompany = verified?.insurer?.name || claimData.insurance.company || null
       }
 
       // Only upsert when we have enough to satisfy the schema's required fields;
@@ -420,19 +432,23 @@ router.post('/submit', async (req, res) => {
 // CIDs passed here.
 router.post('/:id/info-requests/:requestId/respond', async (req, res) => {
   try {
-    if (!process.env.INSURANCE_PORTAL_URL) return res.status(503).json({ error: 'Insurance portal is not configured' })
     const response = String(req.body.response || '').trim()
     if (!response) return res.status(400).json({ error: 'Write a response for the insurer' })
 
-    const url = `${process.env.INSURANCE_PORTAL_URL}/api/claims/${Number(req.params.id)}/info-requests/${encodeURIComponent(req.params.requestId)}/response`
-    const upstream = await fetch(url, {
+    const { claimSubmission } = getContracts()
+    const onChain = await claimSubmission.getClaim(Number(req.params.id))
+    if (!isOurClaim(onChain)) return res.status(404).json({ error: 'This claim was filed by another hospital' })
+    const insurer = await insurerForWallet(onChain.insurer)
+    if (!insurer) return res.status(503).json({ error: 'The insurer for this claim is not on this hospital’s network' })
+
+    const upstream = await fetch(`${insurer.url}/api/claims/${Number(req.params.id)}/info-requests/${encodeURIComponent(req.params.requestId)}/response`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.INSURANCE_API_KEY || '' },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': insurer.apiKey },
       body: JSON.stringify({ response, documents: req.body.documents || [], respondedByName: req.user?.name || 'Hospital' }),
       signal: AbortSignal.timeout(8000),
     })
     const data = await upstream.json().catch(() => ({}))
-    if (!upstream.ok) return res.status(upstream.status).json({ error: data.error || 'The insurance portal rejected the response' })
+    if (!upstream.ok) return res.status(upstream.status).json({ error: data.error || 'The insurer rejected the response' })
     res.json(data)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -442,6 +458,9 @@ router.post('/:id/info-requests/:requestId/respond', async (req, res) => {
 // POST /api/claims/:id/authenticate — TX3: doctor/admin authenticates claim
 router.post('/:id/authenticate', requireAdmin, async (req, res) => {
   try {
+    const { claimSubmission } = getContracts()
+    const onChain = await claimSubmission.getClaim(Number(req.params.id))
+    if (!isOurClaim(onChain)) return res.status(404).json({ error: 'This claim was filed by another hospital' })
     const { txHash } = await authenticateClaimOnBlockchain(Number(req.params.id))
     res.json({ success: true, txHash })
   } catch (err) {
@@ -452,9 +471,7 @@ router.post('/:id/authenticate', requireAdmin, async (req, res) => {
 // TX4 (fraud score), TX5 (adjudicate), TX6 (insurer review), and TX7 (settle) are
 // intentionally NOT exposed here. The hospital backend's signing wallet
 // (HOSPITAL_WALLET_PRIVATE_KEY) only holds HOSPITAL_CLERK_ROLE + DOCTOR_ROLE on
-// RoleManager (see scripts/grantRoles.js) — those on-chain functions require
-// INSURER_ROLE or DEFAULT_ADMIN_ROLE and would revert if called from here.
-// They're correctly implemented, with proper role checks, in the insurance
-// portal's routes/claims.js.
+// RoleManager (granted by scripts/deploy.js) — those on-chain functions can
+// only be called by the insurer the claim is bound to, from its own portal.
 
 module.exports = router

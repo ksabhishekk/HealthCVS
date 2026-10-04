@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { PlusCircle, ArrowRight, TrendingUp, FileText } from 'lucide-react'
-import { getClaimStats, getClaims } from '../api/claims'
+import { PlusCircle, ArrowRight, TrendingUp, FileText, BarChart3 } from 'lucide-react'
+import { getClaimStats, getClaims, getClaimAnalytics } from '../api/claims'
+import { ChartCard, StackedDaily, BarList, COLORS, fmtINR as fmtMoney, fmtPct } from '../components/charts'
 import StatsCard from '../components/StatsCard'
 import ClaimStatusBadge from '../components/ClaimStatusBadge'
 import { useAuth } from '../context/AuthContext'
@@ -18,13 +19,21 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null)
   const [recent, setRecent] = useState([])
   const [loading, setLoading] = useState(true)
+  const [analytics, setAnalytics] = useState(null)
 
   useEffect(() => {
     Promise.all([
       getClaimStats().then(r => setStats(r.data)),
       getClaims().then(r => setRecent(r.data.claims?.slice(0, 8) || [])),
     ]).finally(() => setLoading(false))
+    getClaimAnalytics().then(r => setAnalytics(r.data)).catch(() => {})
   }, [])
+
+  const k = analytics?.kpis
+  const actions = k ? [
+    { n: k.awaitingDoctor, label: 'waiting for doctor authentication' },
+    { n: k.openInfoRequests, label: 'question(s) from the insurer to answer' },
+  ].filter(a => a.n > 0) : []
 
   return (
     <div>
@@ -36,19 +45,57 @@ export default function Dashboard() {
             {todayStr()} &mdash; Welcome back, <span className="text-gray-600 font-medium">{user?.name}</span>
           </p>
         </div>
-        <Link to="/claims/new" className="btn-primary">
-          <PlusCircle className="w-4 h-4" />
-          New Claim
-        </Link>
+        <div className="flex gap-3">
+          <Link to="/analytics" className="btn-secondary">
+            <BarChart3 className="w-4 h-4" />
+            Analytics
+          </Link>
+          <Link to="/claims/new" className="btn-primary">
+            <PlusCircle className="w-4 h-4" />
+            New Claim
+          </Link>
+        </div>
       </div>
+
+      {actions.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-4 py-3 mb-6 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="font-semibold">Action needed:</span>
+          {actions.map(a => <span key={a.label}><strong>{a.n}</strong> {a.label}</span>)}
+          <Link to="/claims" className="ml-auto text-amber-900 underline text-xs">Open claims</Link>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatsCard label="Total Claims"       value={loading ? '—' : stats?.total}                       color="blue" />
-        <StatsCard label="Settled"            value={loading ? '—' : stats?.settled}                     color="green" />
-        <StatsCard label="Pending Review"     value={loading ? '—' : stats?.pending}                     color="yellow" />
-        <StatsCard label="Flagged / Rejected" value={loading ? '—' : (stats?.flagged + stats?.rejected)} color="red" />
+        <StatsCard label="Total Claims"       value={loading ? '—' : stats?.total}                       color="blue"
+          sub={k ? `${fmtMoney(k.claimedTotal)} claimed` : undefined} />
+        <StatsCard label="Settled"            value={loading ? '—' : stats?.settled}                     color="green"
+          sub={k ? `${fmtMoney(k.receivedTotal)} received` : undefined} />
+        <StatsCard label="Pending Review"     value={loading ? '—' : stats?.pending}                     color="yellow"
+          sub={k ? `${fmtPct(k.approvalRate)} approval rate so far` : undefined} />
+        <StatsCard label="Flagged / Rejected" value={loading ? '—' : (stats?.flagged + stats?.rejected)} color="red"
+          sub={k ? `${fmtMoney(k.deductedTotal)} deducted · ${fmtMoney(k.rejectedAmount)} rejected` : undefined} />
       </div>
+
+      {analytics && k.totalClaims > 0 && (
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-5 mb-8">
+          <ChartCard className="xl:col-span-3" title="Claims per day, by outcome" subtitle="Last 14 days">
+            <StackedDaily daily={analytics.daily} />
+          </ChartCard>
+          <ChartCard className="xl:col-span-2" title="Where our claims are now" subtitle="Current status of every claim">
+            <BarList
+              max={k.totalClaims}
+              rows={analytics.pipeline.filter(p => p.count > 0).map(p => ({
+                label: p.label,
+                value: p.count,
+                display: p.count,
+                color: p.status === 5 || p.status === 4 ? COLORS.good : p.status === 7 ? COLORS.critical : p.status === 6 ? COLORS.flagged : COLORS.blue,
+                tip: `${p.count} claim(s): ${p.label}`,
+              }))}
+            />
+          </ChartCard>
+        </div>
+      )}
 
       {/* Recent claims */}
       <div className="card">

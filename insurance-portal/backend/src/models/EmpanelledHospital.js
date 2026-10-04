@@ -1,8 +1,8 @@
 const mongoose = require('mongoose')
 
 /**
- * A hospital this insurer has empanelled, and the wallets allowed to submit
- * claims on its behalf.
+ * A network hospital: one this insurer has empanelled for cashless claims, and
+ * the wallets allowed to submit claims on its behalf.
  *
  * Hospital identity used to be whatever a hospital portal put in its own .env
  * (HOSPITAL_NAME / HOSPITAL_CODE) — self-declared and never checked. Binding the
@@ -17,7 +17,17 @@ const empanelledHospitalSchema = new mongoose.Schema({
   status:            { type: String, enum: ['active', 'suspended'], default: 'active' },
   empanelledUntil:   { type: Date, default: null },
   notes:             { type: String, default: '' },
-  addedBy:           { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  // Profile, shown on the network-hospitals page
+  city:          { type: String, default: '' },
+  address:       { type: String, default: '' },
+  accreditation: { type: String, default: '' },   // e.g. NABH, NABH entry-level
+  specialities:  [{ type: String, trim: true }],
+  beds:          { type: Number, default: null },
+  contactPhone:  { type: String, default: '' },
+  contactEmail:  { type: String, default: '' },
+
+  addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true })
 
 module.exports = mongoose.model('EmpanelledHospital', empanelledHospitalSchema)

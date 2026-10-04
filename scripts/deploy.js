@@ -1,148 +1,169 @@
 /**
- * deploy.js — deploys all 4 HealthCVS contracts in the correct order.
+ * deploy.js — deploys and wires all 4 HealthCVS contracts.
  *
- * Deployment order matters because of constructor dependencies:
- *   1. RoleManager         (no dependencies)
- *   2. PatientRegistry     (needs RoleManager address)
- *   3. ClaimSubmission     (needs RoleManager + PatientRegistry addresses)
- *   4. AutoAdjudication    (needs RoleManager + ClaimSubmission addresses)
+ *   1. RoleManager        (no dependencies)
+ *   2. PatientRegistry    (RoleManager)                      policies, members, sum insured
+ *   3. ClaimSubmission    (RoleManager, PatientRegistry)     TX 2–4
+ *   4. AutoAdjudication   (RoleManager, ClaimSubmission, PatientRegistry)  TX 5–7
  *
- * Resume support: if ROLE_MANAGER_ADDRESS or PATIENT_REGISTRY_ADDRESS are
- * already set in .env, the script reuses them instead of redeploying.
- * This saves gas if a previous run ran out of funds mid-way.
+ * Then:
+ *   - makes AutoAdjudication the only contract that may draw cover or change a
+ *     claim's status after TX 4
+ *   - loads the package-rate card from config/procedure_rates.json
+ *   - grants roles to the wallets the backends actually sign with, read from
+ *     their .env private keys (hospital → clerk + doctor, insurer → insurer),
+ *     and reads every grant back
+ *   - on a local chain, writes the new addresses into the three .env files and
+ *     copies the fresh ABIs into both backends
  *
- * Run on local Hardhat node:  npx hardhat run scripts/deploy.js
- * Run on Amoy testnet:        npx hardhat run scripts/deploy.js --network amoy
+ * Local (Ganache on :8545):  npx hardhat run scripts/deploy.js --network localhost
+ * Amoy testnet:              npx hardhat run scripts/deploy.js --network amoy
  */
 
-const { ethers, network } = require("hardhat");
+const fs = require("fs");
+const path = require("path");
+const { ethers, network, artifacts } = require("hardhat");
+
+const ROOT = path.join(__dirname, "..");
+const ENV_FILES = [
+  path.join(ROOT, ".env"),
+  path.join(ROOT, "hospital-portal/backend/.env"),
+  path.join(ROOT, "insurance-portal/backend/.env"),
+];
+
+function readEnv(file) {
+  if (!fs.existsSync(file)) return {};
+  const out = {};
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+    if (m) out[m[1]] = m[2].trim();
+  }
+  return out;
+}
+
+// The address behind a backend's signing key, or null if the key is unusable.
+function addressOfKey(key) {
+  if (!key) return null;
+  try {
+    return new ethers.Wallet(key.startsWith("0x") ? key : `0x${key}`).address;
+  } catch {
+    return null;
+  }
+}
 
 async function main() {
-  const [deployer, account1] = await ethers.getSigners();
-  // On local Hardhat network, always deploy fresh — .env addresses are for Amoy only
+  const signers = await ethers.getSigners();
+  const deployer = signers[0];
   const isLocal = network.name === "hardhat" || network.name === "localhost";
 
   console.log("\n================================================");
   console.log("  HealthCVS — Deploying Smart Contracts");
   console.log("================================================");
-  console.log(`Deployer wallet : ${deployer.address}`);
-  console.log(`Network         : ${hre.network.name}`);
+  console.log(`Deployer : ${deployer.address}`);
+  console.log(`Network  : ${network.name}\n`);
 
-  const balance = await ethers.provider.getBalance(deployer.address);
-  console.log(`Wallet balance  : ${ethers.formatEther(balance)} POL\n`);
+  const deploy = async (name, ...args) => {
+    const c = await (await ethers.getContractFactory(name)).deploy(...args);
+    await c.waitForDeployment();
+    console.log(`✓ ${name.padEnd(17)} ${await c.getAddress()}`);
+    return c;
+  };
 
-  // ── 1. RoleManager ──────────────────────────────────────────────────────────
-  let roleManagerAddress = !isLocal && process.env.ROLE_MANAGER_ADDRESS;
-  let roleManager;
+  const roleManager = await deploy("RoleManager");
+  const registry = await deploy("PatientRegistry", await roleManager.getAddress());
+  const claims = await deploy("ClaimSubmission", await roleManager.getAddress(), await registry.getAddress());
+  const adj = await deploy(
+    "AutoAdjudication",
+    await roleManager.getAddress(), await claims.getAddress(), await registry.getAddress()
+  );
 
-  if (roleManagerAddress) {
-    console.log(`✓ RoleManager already deployed at: ${roleManagerAddress} (reusing)`);
-    roleManager = await ethers.getContractAt("RoleManager", roleManagerAddress);
-  } else {
-    console.log("Deploying RoleManager...");
-    const RoleManager = await ethers.getContractFactory("RoleManager");
-    roleManager = await RoleManager.deploy();
-    await roleManager.waitForDeployment();
-    roleManagerAddress = await roleManager.getAddress();
-    console.log(`✓ RoleManager deployed at: ${roleManagerAddress}`);
-  }
+  // ── Wiring ──────────────────────────────────────────────────────────────────
+  await (await registry.setAdjudicator(await adj.getAddress())).wait();
+  await (await claims.setAdjudicator(await adj.getAddress())).wait();
+  console.log("\n✓ AutoAdjudication set as the only contract that draws cover and changes claim status");
 
-  // ── 2. PatientRegistry ──────────────────────────────────────────────────────
-  let patientRegistryAddress = !isLocal && process.env.PATIENT_REGISTRY_ADDRESS;
-  let patientRegistry;
+  const { procedures } = JSON.parse(fs.readFileSync(path.join(ROOT, "config/procedure_rates.json"), "utf8"));
+  await (await adj.setProcedureRates(procedures.map(p => p.code), procedures.map(p => p.rate))).wait();
+  console.log(`✓ Loaded ${procedures.length} package rates from config/procedure_rates.json`);
 
-  if (patientRegistryAddress) {
-    console.log(`✓ PatientRegistry already deployed at: ${patientRegistryAddress} (reusing)`);
-    patientRegistry = await ethers.getContractAt("PatientRegistry", patientRegistryAddress);
-  } else {
-    console.log("\nDeploying PatientRegistry...");
-    const PatientRegistry = await ethers.getContractFactory("PatientRegistry");
-    patientRegistry = await PatientRegistry.deploy(roleManagerAddress);
-    await patientRegistry.waitForDeployment();
-    patientRegistryAddress = await patientRegistry.getAddress();
-    console.log(`✓ PatientRegistry deployed at: ${patientRegistryAddress}`);
-  }
+  // ── Roles ───────────────────────────────────────────────────────────────────
+  const hospitalEnv = readEnv(ENV_FILES[1]);
+  const insurerEnv = readEnv(ENV_FILES[2]);
+  let hospitalWallet = process.env.HOSPITAL_WALLET_ADDRESS || addressOfKey(hospitalEnv.HOSPITAL_WALLET_PRIVATE_KEY);
+  let insurerWallet = process.env.INSURER_WALLET_ADDRESS || addressOfKey(insurerEnv.INSURER_WALLET_PRIVATE_KEY);
+  const oracleWallet = addressOfKey(insurerEnv.ORACLE_PRIVATE_KEY);
 
-  // ── 3. ClaimSubmission ──────────────────────────────────────────────────────
-  let claimSubmissionAddress = !isLocal && process.env.CLAIM_SUBMISSION_ADDRESS;
-  let claimSubmission;
-
-  if (claimSubmissionAddress) {
-    console.log(`✓ ClaimSubmission already deployed at: ${claimSubmissionAddress} (reusing)`);
-    claimSubmission = await ethers.getContractAt("ClaimSubmission", claimSubmissionAddress);
-  } else {
-    console.log("\nDeploying ClaimSubmission...");
-    const ClaimSubmission = await ethers.getContractFactory("ClaimSubmission");
-    claimSubmission = await ClaimSubmission.deploy(roleManagerAddress, patientRegistryAddress);
-    await claimSubmission.waitForDeployment();
-    claimSubmissionAddress = await claimSubmission.getAddress();
-    console.log(`✓ ClaimSubmission deployed at: ${claimSubmissionAddress}`);
-  }
-
-  // ── 4. AutoAdjudication ─────────────────────────────────────────────────────
-  let autoAdjudicationAddress = !isLocal && process.env.AUTO_ADJUDICATION_ADDRESS;
-
-  if (autoAdjudicationAddress) {
-    console.log(`✓ AutoAdjudication already deployed at: ${autoAdjudicationAddress} (reusing)`);
-  } else {
-    console.log("\nDeploying AutoAdjudication...");
-    const AutoAdjudication = await ethers.getContractFactory("AutoAdjudication");
-    const autoAdjudication = await AutoAdjudication.deploy(roleManagerAddress, claimSubmissionAddress);
-    await autoAdjudication.waitForDeployment();
-    autoAdjudicationAddress = await autoAdjudication.getAddress();
-    console.log(`✓ AutoAdjudication deployed at: ${autoAdjudicationAddress}`);
-  }
-
-  // ── Grant deployer all roles (for testing the full flow) ───────────────────
-  console.log("\nGranting all roles to deployer for testing...");
-  try {
-    await (await roleManager.grantInsurer(deployer.address)).wait();
-    await (await roleManager.grantHospitalClerk(deployer.address)).wait();
-    await (await roleManager.grantDoctor(deployer.address)).wait();
-    
-    if (isLocal && account1) {
-      await (await roleManager.grantInsurer(account1.address)).wait();
-      console.log(`✓ Granted Insurer role to Account #2 (${account1.address})`);
+  if (!hospitalWallet || !insurerWallet) {
+    if (!isLocal || signers.length < 3) {
+      throw new Error("Set HOSPITAL_WALLET_PRIVATE_KEY and INSURER_WALLET_PRIVATE_KEY in the backend .env files.");
     }
-
-    // AutoAdjudication calls claimSubmission.updateClaimStatus() — its contract
-    // address must have INSURER_ROLE so the cross-contract call is authorized.
-    await (await roleManager.grantInsurer(autoAdjudicationAddress)).wait();
-    console.log("✓ Deployer granted: Insurer, HospitalClerk, Doctor roles");
-    console.log("✓ AutoAdjudication contract granted: Insurer role (for cross-contract calls)");
-  } catch (e) {
-    console.log("⚠ Roles already granted or grant failed:", e.message);
+    hospitalWallet = hospitalWallet || signers[1].address;
+    insurerWallet = insurerWallet || signers[2].address;
+    console.log("⚠ No backend keys found — using local accounts #1 (hospital) and #2 (insurer).");
+  }
+  if (hospitalWallet.toLowerCase() === insurerWallet.toLowerCase()) {
+    throw new Error("The hospital and the insurer must sign with different wallets.");
   }
 
-  // ── Summary ─────────────────────────────────────────────────────────────────
+  await (await roleManager.grantHospitalClerk(hospitalWallet)).wait();
+  await (await roleManager.grantDoctor(hospitalWallet)).wait();
+  await (await roleManager.grantInsurer(insurerWallet)).wait();
+
+  const checks = [
+    ["HOSPITAL_CLERK_ROLE", await roleManager.HOSPITAL_CLERK_ROLE(), hospitalWallet, "hospital"],
+    ["DOCTOR_ROLE", await roleManager.DOCTOR_ROLE(), hospitalWallet, "hospital"],
+    ["INSURER_ROLE", await roleManager.INSURER_ROLE(), insurerWallet, "insurer"],
+  ];
+  console.log("\nRoles (read back from the chain):");
+  for (const [label, role, account, who] of checks) {
+    const ok = await roleManager.hasRole(role, account);
+    console.log(`  ${ok ? "OK  " : "FAIL"} ${label.padEnd(20)} ${who.padEnd(8)} ${account}`);
+    if (!ok) throw new Error(`${label} did not take effect`);
+  }
+  const adminRole = await roleManager.DEFAULT_ADMIN_ROLE();
+  if (oracleWallet) {
+    const oracleOk = await roleManager.hasRole(adminRole, oracleWallet) || oracleWallet === insurerWallet;
+    console.log(`  ${oracleOk ? "OK  " : "WARN"} ${"ORACLE (TX 4)".padEnd(20)} ${"oracle".padEnd(8)} ${oracleWallet}`);
+    if (!oracleOk) console.log("       ORACLE_PRIVATE_KEY must be the deployer (admin) or the insurer wallet, or TX 4 will revert.");
+  }
+
+  const addresses = {
+    ROLE_MANAGER_ADDRESS: await roleManager.getAddress(),
+    PATIENT_REGISTRY_ADDRESS: await registry.getAddress(),
+    CLAIM_SUBMISSION_ADDRESS: await claims.getAddress(),
+    AUTO_ADJUDICATION_ADDRESS: await adj.getAddress(),
+  };
+
   console.log("\n================================================");
-  console.log("  Deployment Complete — Save these addresses!");
+  for (const [k, v] of Object.entries(addresses)) console.log(`${k}=${v}`);
   console.log("================================================");
-  console.log(`ROLE_MANAGER_ADDRESS=${roleManagerAddress}`);
-  console.log(`PATIENT_REGISTRY_ADDRESS=${patientRegistryAddress}`);
-  console.log(`CLAIM_SUBMISSION_ADDRESS=${claimSubmissionAddress}`);
-  console.log(`AUTO_ADJUDICATION_ADDRESS=${autoAdjudicationAddress}`);
-  // ── Auto-Update .env files (for local dev) ───────────────────────────────────
-  if (isLocal) {
-    const fs = require('fs');
-    const path = require('path');
-    
-    function updateEnvFile(envPath) {
-      if (!fs.existsSync(envPath)) return;
-      let content = fs.readFileSync(envPath, 'utf8');
-      content = content.replace(/ROLE_MANAGER_ADDRESS=.*/g, `ROLE_MANAGER_ADDRESS=${roleManagerAddress}`);
-      content = content.replace(/PATIENT_REGISTRY_ADDRESS=.*/g, `PATIENT_REGISTRY_ADDRESS=${patientRegistryAddress}`);
-      content = content.replace(/CLAIM_SUBMISSION_ADDRESS=.*/g, `CLAIM_SUBMISSION_ADDRESS=${claimSubmissionAddress}`);
-      content = content.replace(/AUTO_ADJUDICATION_ADDRESS=.*/g, `AUTO_ADJUDICATION_ADDRESS=${autoAdjudicationAddress}`);
-      fs.writeFileSync(envPath, content);
-      console.log(`✓ Updated ${envPath}`);
-    }
 
-    console.log("\nUpdating .env files with new local addresses...");
-    updateEnvFile(path.join(__dirname, '../.env'));
-    updateEnvFile(path.join(__dirname, '../hospital-portal/backend/.env'));
-    updateEnvFile(path.join(__dirname, '../insurance-portal/backend/.env'));
+  // ABIs depend only on the source, so keep both backends in step on every run.
+  for (const name of ["PatientRegistry", "ClaimSubmission", "AutoAdjudication"]) {
+    const { abi } = await artifacts.readArtifact(name);
+    const body = "[\n" + abi.map(item => "  " + JSON.stringify(item)).join(",\n") + "\n]\n";
+    for (const portal of ["hospital-portal", "insurance-portal"]) {
+      fs.writeFileSync(path.join(ROOT, portal, "backend/src/abis", `${name}.json`), body);
+    }
   }
+  console.log("✓ Copied fresh ABIs into both backends");
+
+  // The in-process "hardhat" network vanishes when this script exits, so only
+  // a persistent local chain (Ganache on localhost) gets its addresses saved.
+  if (network.name !== "localhost") return;
+
+  for (const file of ENV_FILES) {
+    if (!fs.existsSync(file)) continue;
+    let content = fs.readFileSync(file, "utf8");
+    for (const [k, v] of Object.entries(addresses)) {
+      content = new RegExp(`^${k}=.*$`, "m").test(content)
+        ? content.replace(new RegExp(`^${k}=.*$`, "m"), `${k}=${v}`)
+        : `${content.replace(/\s*$/, "")}\n${k}=${v}\n`;
+    }
+    fs.writeFileSync(file, content);
+    console.log(`✓ Updated ${path.relative(ROOT, file)}`);
+  }
+  console.log("\nRestart both backends so they pick up the new addresses.");
 }
 
 main().catch((error) => {

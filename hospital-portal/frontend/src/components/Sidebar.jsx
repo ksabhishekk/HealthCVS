@@ -1,16 +1,17 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, FileText, PlusCircle,
-  UserCog, LogOut, Hospital, ShieldCheck, ChevronRight,
+  UserCog, LogOut, Hospital, ShieldCheck, ChevronRight, BarChart3, Network,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 const clerkNav = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { to: '/analytics', icon: BarChart3,       label: 'Analytics' },
   { to: '/patients',  icon: Users,           label: 'Patients' },
   { to: '/claims',    icon: FileText,         label: 'Claims' },
   { to: '/claims/new',icon: PlusCircle,       label: 'New Claim' },
-  { to: '/insurer',   icon: ShieldCheck,      label: 'Insurer' },
+  { to: '/insurer',   icon: Network,          label: 'Insurance Network' },
 ]
 
 const adminNav = [

@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, AlertCircle, CheckCircle } from 'lucide-react'
 import { createPatient } from '../../api/patients'
 import PageHeader from '../../components/PageHeader'
-import { isValidAadhaar, AADHAAR_INVALID_MESSAGE } from '../../lib/aadhaar'
+import { isValidAadhaar, AADHAAR_INVALID_MESSAGE, isIndividualPan, PAN_INVALID_MESSAGE } from '../../lib/aadhaar'
 
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-', 'Unknown']
 
@@ -32,6 +32,9 @@ export default function NewPatient() {
     }
     if (!isValidAadhaar(form.aadhaarNumber)) {
       return setError(AADHAAR_INVALID_MESSAGE)
+    }
+    if (form.panNumber && !isIndividualPan(form.panNumber)) {
+      return setError(PAN_INVALID_MESSAGE)
     }
     setLoading(true)
     try {
@@ -95,8 +98,11 @@ export default function NewPatient() {
                 className="input font-mono uppercase"
                 value={form.panNumber}
                 onChange={e => set('panNumber', e.target.value.toUpperCase().slice(0, 10))}
-                placeholder="ABCDE1234F"
+                placeholder="ABCPE1234F"
               />
+              {form.panNumber.length === 10 && !isIndividualPan(form.panNumber) && (
+                <p className="text-xs text-red-600 mt-1">{PAN_INVALID_MESSAGE}</p>
+              )}
             </div>
           </div>
         </div>

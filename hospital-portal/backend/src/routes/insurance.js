@@ -1,51 +1,76 @@
 const express = require('express')
 const { authenticate } = require('../middleware/auth')
 const { ethers } = require('ethers')
+const { listInsurers, resolveInsurer, insurerPost, onChainInsurerOf } = require('../services/insurers')
 
 const router = express.Router()
 router.use(authenticate)
 
-// POST /api/insurance/verify-policy
-// Proxies to insurance portal server-to-server — hospital frontend never calls insurer directly.
+// GET /api/insurance/insurers — the insurers on this hospital's network, each
+// with its wallet checked on-chain and our cashless empanelment status.
+router.get('/insurers', async (req, res) => {
+  try {
+    res.json({ insurers: await listInsurers() })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/**
+ * Asks the patient's insurer whether they are covered — the cashless
+ * pre-authorisation check — and cross-checks the answer against the chain.
+ * Shared by the claim wizard's "Verify with insurer" step, the consent step
+ * and claim submission.
+ *
+ * Returns the insurer's answer including the consent contact; callers that
+ * send the result to a browser must strip contactNumber and email first.
+ */
+async function verifyWithInsurer({ insurerCode, aadhaarHash, aadhaarNumber, policyId, admissionDate, patient, memberRef }) {
+  const hash = aadhaarHash || (aadhaarNumber ? ethers.keccak256(ethers.toUtf8Bytes(String(aadhaarNumber))) : null)
+  if (!hash) throw Object.assign(new Error('aadhaarHash or aadhaarNumber is required'), { status: 400 })
+  if (!policyId) throw Object.assign(new Error('Policy number is required'), { status: 400 })
+
+  const insurer = await resolveInsurer(insurerCode)
+  const data = await insurerPost(insurer, '/api/policy/verify', {
+    aadhaarHash: hash,
+    policyId: String(policyId).trim().toUpperCase(),
+    // Midday, so the date cannot slip across midnight in either timezone.
+    admissionDate: admissionDate ? `${String(admissionDate).slice(0, 10)}T12:00:00` : undefined,
+    patient,
+    memberRef,
+  })
+
+  // Don't take the insurer portal's word for it: the policy must have been
+  // registered on-chain by the wallet this insurer signs with.
+  if (data.policyKey && insurer.profile?.wallet) {
+    const onChainInsurer = await onChainInsurerOf(data.policyKey)
+    if (onChainInsurer && onChainInsurer !== ethers.ZeroAddress &&
+        onChainInsurer.toLowerCase() !== insurer.profile.wallet.toLowerCase()) {
+      return { ...data, valid: false, reason: 'This policy is registered on-chain by a different insurer than the one answering for it' }
+    }
+    data.onChainVerified = onChainInsurer && onChainInsurer !== ethers.ZeroAddress
+  }
+  return { ...data, insurer: { code: insurer.profile?.code || insurerCode, name: insurer.profile?.name, wallet: insurer.profile?.wallet } }
+}
+
+const forBrowser = ({ contactNumber, email, ...rest }) => ({
+  ...rest,
+  consentContactOnFile: Boolean(contactNumber || email),
+})
+
+// POST /api/insurance/verify-policy — the wizard's pre-authorisation check.
 router.post('/verify-policy', async (req, res) => {
   try {
-    const { aadhaarHash: hash, aadhaarNumber, policyId } = req.body
-
-    if (!policyId) {
-      return res.status(400).json({ error: 'policyId is required' })
-    }
-
-    let aadhaarHash = hash
-    if (!aadhaarHash && aadhaarNumber) {
-      aadhaarHash = ethers.keccak256(ethers.toUtf8Bytes(aadhaarNumber))
-    }
-    if (!aadhaarHash) {
-      return res.status(400).json({ error: 'aadhaarHash or aadhaarNumber is required' })
-    }
-
-    const insuranceUrl = process.env.INSURANCE_PORTAL_URL
-    if (!insuranceUrl) {
-      return res.status(503).json({ error: 'Insurance portal integration not configured (INSURANCE_PORTAL_URL missing)' })
-    }
-
-    const response = await fetch(`${insuranceUrl}/api/policy/verify`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.INSURANCE_API_KEY || '',
-      },
-      body: JSON.stringify({ aadhaarHash, policyId }),
-      signal: AbortSignal.timeout(8000),
-    })
-
-    const data = await response.json()
-    res.status(response.status).json(data)
+    const data = await verifyWithInsurer(req.body)
+    res.json(forBrowser(data))
   } catch (err) {
-    if (err.type === 'request-timeout' || err.code === 'ECONNREFUSED') {
-      return res.status(503).json({ error: 'Insurance portal is unreachable. Proceed with caution.' })
+    if (err.status) return res.status(err.status).json({ error: err.message })
+    if (err.name === 'TimeoutError' || /fetch failed|ECONNREFUSED/.test(err.message)) {
+      return res.status(503).json({ error: 'The insurer is unreachable right now. Try again in a moment.' })
     }
     res.status(500).json({ error: err.message })
   }
 })
 
 module.exports = router
+module.exports.verifyWithInsurer = verifyWithInsurer

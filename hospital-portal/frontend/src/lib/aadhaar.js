@@ -25,3 +25,8 @@ export const isValidAadhaar = (number) => {
 
 export const AADHAAR_INVALID_MESSAGE =
   "Not a valid Aadhaar number — it must start with 2-9 and end in a valid check digit."
+
+// A person's PAN: 5 letters, 4 digits, a letter — and "P" as the 4th character,
+// which marks an individual (C = company, F = firm, and so on).
+export const isIndividualPan = (pan) => /^[A-Z]{3}P[A-Z][0-9]{4}[A-Z]$/.test(String(pan || '').toUpperCase())
+export const PAN_INVALID_MESSAGE = 'Not a valid individual PAN — 5 letters, 4 digits, a letter, with "P" as the 4th character.'

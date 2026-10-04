@@ -1,24 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { FileText, ArrowRight, UserPlus } from 'lucide-react'
-import { getClaimStats, getClaims, getSignalAnalytics } from '../api/claims'
+import { FileText, ArrowRight, ScrollText, BarChart3 } from 'lucide-react'
+import { getClaimStats, getClaims, getSignalAnalytics, getAnalyticsOverview } from '../api/claims'
+import { ChartCard, StackedDaily, ScoreHistogram, fmtINR as fmtMoney } from '../components/charts'
 
-const SIGNAL_LABELS = {
-  doctor_unverified: 'Doctor not in NMC registry',
-  doctor_domain_mismatch: 'Doctor specialty does not fit diagnosis',
-  doctor_name_mismatch: 'Registration belongs to another doctor',
-  procedure_mismatch: 'Procedure does not fit diagnosis',
-  bill_not_medical: 'Bill is not a medical bill',
-  bill_overclaim: 'Claim exceeds billed total',
-  bill_mismatch: 'Bill name or dates disagree',
-  duplicate_documents: 'Same file in several slots',
-  document_slot_mismatch: 'Document in the wrong slot',
-  hospital_not_verified: 'Hospital identity not verified',
-  consent_contact_reused: 'Consent contact reused across policies',
-  doctor_track_record: 'Doctor’s past claims mostly rejected',
-  kyc_aadhaar_mismatch: 'ID document belongs to someone else',
-  kyc_pan_mismatch: 'PAN on ID does not match',
-}
+import { signalLabel } from '../lib/signals'
 import StatsCard from '../components/StatsCard'
 import ClaimStatusBadge from '../components/ClaimStatusBadge'
 import { useAuth } from '../context/AuthContext'
@@ -33,6 +19,7 @@ export default function Dashboard() {
   const [recent, setRecent] = useState([])
   const [loading, setLoading] = useState(true)
   const [signals, setSignals] = useState(null)
+  const [overview, setOverview] = useState(null)
 
   useEffect(() => {
     Promise.all([
@@ -40,7 +27,10 @@ export default function Dashboard() {
       getClaims().then(r => setRecent(r.data.claims?.slice(0, 8) || [])),
     ]).finally(() => setLoading(false))
     getSignalAnalytics().then(r => setSignals(r.data)).catch(() => {})
+    getAnalyticsOverview().then(r => setOverview(r.data)).catch(() => {})
   }, [])
+
+  const k = overview?.kpis
 
   return (
     <div>
@@ -49,18 +39,44 @@ export default function Dashboard() {
           <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-0.5">{todayStr()}</p>
         </div>
-        <Link to="/patients/enroll" className="btn-primary">
-          <UserPlus className="w-4 h-4" />
-          Enroll Patient
-        </Link>
+        <div className="flex gap-3">
+          <Link to="/analytics" className="btn-secondary">
+            <BarChart3 className="w-4 h-4" />
+            Analytics
+          </Link>
+          <Link to="/policies/new" className="btn-primary">
+            <ScrollText className="w-4 h-4" />
+            Issue policy
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <StatsCard label="Total Claims"      value={loading ? '…' : stats?.total}   color="blue" />
-        <StatsCard label="Settled"           value={loading ? '…' : stats?.settled} color="emerald" />
-        <StatsCard label="Pending Review"    value={loading ? '…' : stats?.pending} color="yellow" />
-        <StatsCard label="Flagged / Rejected" value={loading ? '…' : ((stats?.flagged ?? 0) + (stats?.rejected ?? 0))} color="red" />
+        <StatsCard label="Total Claims"      value={loading ? '…' : stats?.total}   color="blue"
+          sub={k ? `${fmtMoney(k.claimedTotal)} claimed` : undefined} />
+        <StatsCard label="Settled"           value={loading ? '…' : stats?.settled} color="emerald"
+          sub={k ? `${fmtMoney(k.paidTotal)} paid out` : undefined} />
+        <StatsCard label="Pending Review"    value={loading ? '…' : stats?.pending} color="yellow"
+          sub={k ? `${k.awaitingReview} waiting for a reviewer` : undefined} />
+        <StatsCard label="Flagged / Rejected" value={loading ? '…' : ((stats?.flagged ?? 0) + (stats?.rejected ?? 0))} color="red"
+          sub={k ? `${fmtMoney(k.savedTotal)} withheld after review` : undefined} />
       </div>
+
+      {overview && overview.kpis.totalClaims > 0 && (
+        <div className="grid grid-cols-1 xl:grid-cols-5 gap-5 mb-6">
+          <ChartCard className="xl:col-span-3" title="Claims per day, by outcome" subtitle="Last 14 days">
+            <StackedDaily daily={overview.daily} />
+          </ChartCard>
+          <ChartCard
+            className="xl:col-span-2"
+            title="AI risk score distribution"
+            subtitle={`Average ${k.avgScore ?? '—'} · ${k.highRisk} claim(s) at 75+`}
+            empty={!k.scored && 'No claims have been scored yet'}
+          >
+            <ScoreHistogram bins={overview.scoreBins} />
+          </ChartCard>
+        </div>
+      )}
 
       {/* Pipeline breakdown */}
       {stats && (
@@ -101,7 +117,7 @@ export default function Dashboard() {
               <tbody className="divide-y divide-gray-100">
                 {signals.signals.map(x => (
                   <tr key={x.signal}>
-                    <td className="px-5 py-3 text-gray-800">{SIGNAL_LABELS[x.signal] || x.signal}</td>
+                    <td className="px-5 py-3 text-gray-800">{signalLabel(x.signal)}</td>
                     <td className="px-5 py-3">{x.fired}</td>
                     <td className="px-5 py-3 text-red-600">{x.rejected}</td>
                     <td className="px-5 py-3 text-amber-600">{x.partial}</td>

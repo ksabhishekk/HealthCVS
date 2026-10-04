@@ -285,6 +285,30 @@ export default function XaiPanel({ xaiCid, claimId }) {
             t: hasFinding('kyc_aadhaar_mismatch').label,
             a: 'Treat as possible identity substitution — verify the patient before proceeding.',
           },
+          hasFinding('member_identity_mismatch') && {
+            t: hasFinding('member_identity_mismatch').label,
+            a: 'Verify the patient in person or by video KYC against the member record before any approval.',
+          },
+          hasFinding('reused_document') && {
+            t: hasFinding('reused_document').label,
+            a: 'Compare with the earlier claim — a bill supports one claim only. Reject unless the hospital explains.',
+          },
+          hasFinding('sex_procedure_mismatch') && {
+            t: hasFinding('sex_procedure_mismatch').label,
+            a: 'Clinically impossible for this member — reject unless the member record itself is wrong.',
+          },
+          hasFinding('member_ref_mismatch') && {
+            t: hasFinding('member_ref_mismatch').label,
+            a: 'Confirm the patient’s membership with the policyholder (employer / group) before approving.',
+          },
+          hasFinding('parallel_claim') && {
+            t: hasFinding('parallel_claim').label,
+            a: 'Ask for the other insurer’s settlement letter; pay only what the other policy has not covered.',
+          },
+          hasFinding('waiting_period') && {
+            t: hasFinding('waiting_period').label,
+            a: 'Not payable under the policy terms unless the admission was due to an accident — ask for the MLC/FIR if the hospital says it was.',
+          },
           c.doctorVerified === false && {
             t: 'Doctor could not be verified in the NMC registry',
             a: 'Ask the hospital for the treating doctor’s registration certificate before proceeding.',
@@ -339,6 +363,8 @@ export default function XaiPanel({ xaiCid, claimId }) {
             .map(f => ({
               t: f.label,
               a: f.key.startsWith('hospital_') ? 'Add this hospital to the empanelment registry, or confirm its identity directly.'
+                : f.key === 'member_ref_missing' ? 'Ask the hospital for the ID printed on the member’s health card.'
+                : f.key === 'member_record_missing' ? 'Check the policy’s member list — the patient may have been enrolled under another policy number.'
                 : f.key.startsWith('kyc_') ? 'Request a legible copy of the patient’s identity document.'
                 : f.key.startsWith('card_') ? 'Request an insurance card that shows the policy number.'
                 : f.key.startsWith('diagnosis_absent') ? 'Check that the clinical papers support the claimed diagnosis.'

@@ -38,16 +38,16 @@ Given 1.1–1.3, the tabular fraud score combines a supervised model (XGBoost, 7
 
 ## 2. Blockchain / architecture limitations
 
-### 2.1 PM-JAY catalog covers 10 procedures, not ~1,900
-`AutoAdjudication.sol` ships with 10 hardcoded PM-JAY Health Benefit Package procedure codes and ceiling rates. The real PM-JAY HBP catalog has roughly 1,900 packages. The contract's own code comment already calls this a "sample catalog" — this was never presented as complete.
+### 2.1 The package-rate card covers 15 procedures, not ~1,900
+The rate card in `config/procedure_rates.json` holds 15 procedures modelled on the PM-JAY Health Benefit Package list; `scripts/deploy.js` loads it into `AutoAdjudication.sol` with `setProcedureRates()`. The real HBP catalog has roughly 1,900 packages. The card was always presented as a sample.
 
-**Production path:** load the full HBP catalog via `addProcedureRate()` (already exposed, admin-only) or migrate the catalog to an off-chain reference with an on-chain hash commitment for gas efficiency at scale.
+**Production path:** load the full HBP catalog through the same admin function, or keep the catalog off-chain with an on-chain hash commitment for gas efficiency at scale.
 
-### 2.2 Known bug: ceiling check compares total claim amount to a single procedure's ceiling
-`adjudicateClaim()` compares the claim's **total** claimed amount (summed across every procedure on the claim) against the ceiling of only the **primary** (highest-value) procedure. This can false-flag legitimate multi-procedure claims, and could under-flag amount-padding on secondary procedures. Identified but not yet fixed — the fix requires a contract change and redeployment, currently blocked on the team finishing a local Hardhat chain (to avoid spending scarce Amoy testnet gas on iteration).
+### 2.2 Fixed: ceiling check compared the total claim to one procedure's ceiling
+`adjudicateClaim()` used to compare the claim's **total** against the ceiling of only the primary procedure. Since 2026-09-15 TX5 takes the itemisation (codes and amounts, which must add up to the on-chain total and include the primary code) and checks every line against its own ceiling. Kept here because evaluators who saw the earlier version may ask.
 
 ### 2.3 One wallet per portal holds multiple on-chain roles
-Per `scripts/grantRoles.js`, the hospital backend's signing wallet holds both `HOSPITAL_CLERK_ROLE` and `DOCTOR_ROLE`; the insurance backend's wallet holds `INSURER_ROLE`. This is a practical demo simplification — in production, each individual clerk and doctor would sign with their own wallet (e.g., via MetaMask in the browser), making TX2 and TX3 genuinely distinct, non-repudiable signers rather than the same backend-held key. As currently built, the audit trail proves "the hospital's system attests to this," not "this specific individual doctor personally signed this."
+Per `scripts/deploy.js`, the hospital backend's signing wallet holds both `HOSPITAL_CLERK_ROLE` and `DOCTOR_ROLE`; the insurance backend's wallet holds `INSURER_ROLE`. This is a practical demo simplification — in production, each individual clerk and doctor would sign with their own wallet (e.g., via MetaMask in the browser), making TX2 and TX3 genuinely distinct, non-repudiable signers rather than the same backend-held key. As currently built, the audit trail proves "the hospital's system attests to this," not "this specific individual doctor personally signed this."
 
 ### 2.4 Settlement is fully simulated
 TX7 (`settleClaim()`) flips the claim's status to `Settled` — it does not transfer any real or test currency to the hospital. This matches the original project plan's stated intent ("simulating the payment"), but it's worth being precise with evaluators: this will never move real value in its current form, it's not "not wired up yet."
@@ -57,12 +57,12 @@ TX7 (`settleClaim()`) flips the claim's status to `Settled` — it does not tran
 ## 3. Identity & consent limitations
 
 ### 3.1 No patient-facing application, no DigiLocker integration
-The original project plan specified a React Native patient app with DigiLocker OAuth for real government-backed Aadhaar verification. Neither was built. In the current system, a hospital clerk manually types in a 12-digit number, which is hashed before being stored — `PatientRegistry.sol`'s own code comment explicitly labels this a "DigiLocker simulation," so this was never presented as real identity verification.
+The original project plan specified a React Native patient app with DigiLocker OAuth for real government-backed Aadhaar verification. Neither was built. Members are enrolled by their insurer when the policy is issued, and a hospital clerk types the patient's 12-digit Aadhaar number, which is checksum-validated (Verhoeff) and hashed — only the hash goes on-chain. The insurer then compares the name, date of birth and sex the hospital entered with its own enrolment record.
 
-**Consequence:** there is no cryptographic proof that the patient described in a claim is a real, consenting individual — only that *some* 12-digit number was entered and hashed.
+**Consequence:** a claim can only be filed for someone the insurer enrolled, but there is no government-backed proof that the person at the hospital is that member — only that the number and details match.
 
 ### 3.2 Hospital–patient collusion — partially mitigated, not eliminated
-This was the system's largest blind spot until 2026-08-25: nothing in the pipeline ever asked the patient anything before a claim was filed in their name. The fix implemented is an OTP sent to the patient's own on-file mobile number, which must be verified before a claim can be submitted — adding the patient as a fourth attesting party alongside the clerk, doctor, and insurer, at effectively zero infrastructure cost (no gas, no redeploy, no app).
+This was the system's largest blind spot until 2026-08-25: nothing in the pipeline ever asked the patient anything before a claim was filed in their name. The fix implemented is an OTP sent to the contact the *insurer* holds for that member (hospital staff never see it; a number typed at the hospital is used only when the insurer holds none), which must be verified before a claim can be submitted — adding the patient as a fourth attesting party alongside the clerk, doctor, and insurer, at effectively zero infrastructure cost (no gas, no redeploy, no app).
 
 **What this does and doesn't solve:** it proves *someone with access to that phone number* confirmed the claim at submission time. It does not provide biometric or government-ID-backed proof that the person who received the OTP is the actual patient, and it does not prevent a scenario where the patient themself is complicit in the fraud (the exact "collusion" case). A full solution would need the originally-planned patient app with DigiLocker-verified identity. The OTP step is a genuine, low-cost improvement over "zero coverage," not a complete solution.
 
@@ -71,17 +71,39 @@ This is a design decision, not an oversight, and worth stating as such: image-ba
 
 ---
 
-## 4. Summary table (for a slide)
+## 4. Policy-model limitations
+
+### 4.1 Holder identifiers are checked offline
+GSTIN check characters, PAN structure and holder type (an individual's PAN must have `P` as its 4th character), and the formats of PM-JAY IDs, ABHA numbers and ration-card numbers are validated in software. Nothing is checked against GSTN, the Income Tax Department, NHA's beneficiary database or ABDM, because none of those offer a student project API access.
+
+### 4.2 Only the 30-day initial waiting period is modelled
+Real retail policies also carry pre-existing-disease and specific-disease waiting periods, room-rent and disease-wise sub-limits, no-claim bonuses and restore benefits. HealthCVS models the policy features that change whether and how much a claim pays in the demo scenarios: membership, cover period, suspension, the shared or individual sum insured, co-payment and the initial waiting period. Premiums and underwriting are out of scope — issuing a policy records cover only.
+
+### 4.3 PM-JAY is modelled in insurance mode
+States run PM-JAY through an insurer, through a state health agency trust, or a mix. HealthCVS models the insurance mode: the insurer enrols the eligible family and pays at package rates. Real beneficiary identification happens in NHA's own systems.
+
+### 4.4 Corporate exits are manual
+When an employee leaves, the insurer suspends them and their dependants lose cover on-chain immediately. In practice this would be fed from the employer's HR system; here an insurer user makes the change.
+
+### 4.5 One insurer runs in the demo
+Claims are routed by policy number to the insurer that issued the policy, and each policy is bound on-chain to that insurer's wallet, so a second insurer only needs its own portal deployment, a wallet with `INSURER_ROLE`, and an entry in the hospital's `INSURER_NETWORK`. The demo runs one insurer.
+
+---
+
+## 5. Summary table (for a slide)
 
 | Area | Gap | Severity | Status |
 |---|---|---|---|
 | Tabular model | Synthetic training labels | Medium — architecture is sound, accuracy claims aren't | Disclosed by design |
 | Forgery model | Small dataset (~350 images) | Medium | Disclosed by design |
 | NLP threshold | Calibrated on 8 hand-built pairs | Low (soft signal only) | Disclosed by design |
-| PM-JAY catalog | 10 of ~1,900 procedures | Low (labeled "sample" in code) | Disclosed by design |
-| Ceiling math | Total vs. primary-procedure bug | Medium — real logic bug | **Open, fix pending local chain** |
+| Rate card | 15 of ~1,900 procedures | Low (presented as a sample) | Disclosed by design |
+| Ceiling math | Total vs. primary-procedure bug | Medium — real logic bug | **Fixed** (itemised TX5) |
 | Wallet roles | One wallet, multiple roles per portal | Low (demo simplification) | Disclosed by design |
 | Settlement | Fully simulated, no real transfer | Low (matches original plan) | Disclosed by design |
 | Patient identity | No DigiLocker/patient app | Medium — structural gap | Partially mitigated (OTP) |
 | Collusion | No biometric/ID-backed consent | Medium — structural gap | Partially mitigated (OTP) |
 | Signatures | Not used as primary fraud defense | N/A — deliberate design choice | Disclosed by design |
+| Holder IDs | GSTIN, PAN, PM-JAY, ABHA checked offline | Low | Disclosed by design |
+| Policy features | Only the initial waiting period; no PED waiting, sub-limits or premiums | Low–Medium | Disclosed by design |
+| Network | One insurer in the demo; multi-insurer by configuration | Low | Disclosed by design |

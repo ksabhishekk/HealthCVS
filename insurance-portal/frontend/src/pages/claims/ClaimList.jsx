@@ -89,6 +89,7 @@ export default function ClaimList() {
                 <tr className="text-left text-[13px] text-gray-500 border-b border-gray-100 bg-gray-50/50">
                   <th className="px-5 py-3 font-medium">Claim ID</th>
                   <th className="px-5 py-3 font-medium">Patient</th>
+                  <th className="px-5 py-3 font-medium">Policy</th>
                   <th className="px-5 py-3 font-medium">Hospital</th>
                   <th className="px-5 py-3 font-medium">Procedure</th>
                   <th className="px-5 py-3 font-medium">Claimed Amount</th>
@@ -106,6 +107,11 @@ export default function ClaimList() {
                       </Link>
                     </td>
                     <td className="px-5 py-3 text-gray-700">{c.patientName || <span className="text-gray-400 italic">—</span>}</td>
+                    <td className="px-5 py-3 text-xs">
+                      {c.policyId
+                        ? <><div className="font-mono text-gray-700">{c.policyId}</div><div className="text-gray-400">{c.policyTypeLabel}</div></>
+                        : <span className="text-gray-400">—</span>}
+                    </td>
                     <td className="px-5 py-3 text-gray-500 text-xs">{c.hospitalName || '—'}</td>
                     <td className="px-5 py-3 font-mono text-xs text-gray-600">{c.procedureCode}</td>
                     <td className="px-5 py-3 font-medium">{fmt(c.claimedAmount)}</td>

@@ -25,6 +25,11 @@ module.exports = {
     hardhat: {
       chainId: 31337,
     },
+    // A throwaway local chain for end-to-end tests (npx hardhat node --port 8546),
+    // separate from the Ganache workspace on :8545 that the demo uses.
+    e2e: {
+      url: process.env.E2E_RPC_URL || "http://127.0.0.1:8546",
+    },
     amoy: {
       url: AMOY_RPC_URL,
       accounts: [PRIVATE_KEY],

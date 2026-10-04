@@ -3,48 +3,53 @@ pragma solidity ^0.8.20;
 
 import "./RoleManager.sol";
 import "./ClaimSubmission.sol";
+import "./PatientRegistry.sol";
 
 /**
  * AutoAdjudication — covers TX 5, TX 6, and TX 7 of the 7-step audit trail.
  *
  * TX 5 → adjudicateClaim() : Automated rules engine. Checks every billed
- *                            procedure against its own PM-JAY HBP ceiling and
- *                            the fraud score, records the most the claim can be
- *                            settled for, then flags or approves.
+ *                            procedure against its own package rate, applies
+ *                            the policy's co-payment, caps the result at the
+ *                            member's remaining sum insured, then flags or
+ *                            approves.
  *
  * TX 6 → insurerReview()   : Human insurer confirms or overrides the automated
- *                            decision, and records how much is actually approved
- *                            — which may be less than was claimed.
+ *                            decision and records how much is approved — which
+ *                            may be less than was claimed. The approval is drawn
+ *                            from the member's sum-insured pool and can never
+ *                            exceed what is left in it.
  *
  * TX 7 → settleClaim()     : Simulates payment of the approved amount.
  *
+ * Only the insurer that issued the claim's policy can run TX 5–7 for it.
+ *
  * Why the itemisation is passed in at TX5:
  *   ClaimSubmission stores one procedure code (the primary) and the claim's
- *   *total*. The previous rule compared that total against the primary
- *   procedure's ceiling alone, so any legitimate multi-procedure claim whose
- *   total exceeded the primary ceiling was flagged. The adjudicating insurer
- *   now supplies the line items from the claim's IPFS metadata; the contract
- *   requires them to add up to the on-chain total and to include the on-chain
- *   primary code, then checks each line against its own ceiling.
+ *   *total*. The adjudicating insurer supplies the line items from the claim's
+ *   IPFS metadata; the contract requires them to add up to the on-chain total
+ *   and to include the on-chain primary code, then checks each line against
+ *   its own rate.
  *
- * PM-JAY HBP Catalog:
- *   Stored as a mapping of procedure code → ceiling rate (in INR).
- *   Pre-loaded with 10 common procedures. Admin can add more via addProcedureRate().
+ * Package rates: a network-wide rate card of procedure code → rate in INR,
+ * modelled on the PM-JAY Health Benefit Package (HBP) list and loaded by the
+ * network admin at deployment (setProcedureRates).
  */
 contract AutoAdjudication {
     RoleManager public roleManager;
     ClaimSubmission public claimSubmission;
+    PatientRegistry public patientRegistry;
 
-    // PM-JAY procedure code → ceiling rate in INR
+    // Procedure code → package rate in INR
     mapping(string => uint256) public pmjayRates;
 
-    // TX5 output — the most this claim can be settled for under the rate card:
-    // each line capped at its own ceiling. Lines whose code is not in the
-    // catalog contribute nothing, because nothing on-chain supports them.
+    // TX5 output — the most this claim can be settled for: each line capped at
+    // its own package rate, less the co-payment, and no more than the member's
+    // remaining sum insured.
     mapping(uint256 => uint256) public recommendedAmounts;
 
     // TX6 output — what the insurer actually agreed to pay. Never more than
-    // was claimed; may be less (partial settlement).
+    // was claimed or than the sum insured that remains.
     mapping(uint256 => uint256) public approvedAmounts;
 
     // Fraud score threshold above which a claim is auto-flagged
@@ -69,10 +74,10 @@ contract AutoAdjudication {
     event ClaimSettled(uint256 indexed claimId, address indexed hospitalWallet, uint256 amount, uint256 timestamp);
     event ProcedureRateSet(string procedureCode, uint256 rateInr);
 
-    constructor(address _roleManager, address _claimSubmission) {
+    constructor(address _roleManager, address _claimSubmission, address _patientRegistry) {
         roleManager = RoleManager(_roleManager);
         claimSubmission = ClaimSubmission(_claimSubmission);
-        _initializePMJAYRates();
+        patientRegistry = PatientRegistry(_patientRegistry);
     }
 
     modifier onlyAdmin() {
@@ -83,46 +88,48 @@ contract AutoAdjudication {
         _;
     }
 
-    modifier onlyInsurer() {
-        require(
-            roleManager.hasRole(roleManager.INSURER_ROLE(), msg.sender),
-            "AutoAdjudication: caller is not an insurer"
-        );
-        _;
+    // ── Rate card ───────────────────────────────────────────────────────────────
+
+    function setProcedureRates(string[] calldata _codes, uint256[] calldata _rates) external onlyAdmin {
+        require(_codes.length == _rates.length, "AutoAdjudication: codes and rates must match");
+        for (uint256 i = 0; i < _codes.length; i++) {
+            _setRate(_codes[i], _rates[i]);
+        }
     }
 
-    modifier onlyAdminOrInsurer() {
-        require(
-            roleManager.hasRole(roleManager.DEFAULT_ADMIN_ROLE(), msg.sender) ||
-            roleManager.hasRole(roleManager.INSURER_ROLE(), msg.sender),
-            "AutoAdjudication: not authorized"
-        );
-        _;
+    function addProcedureRate(string calldata _code, uint256 _rateInr) external onlyAdmin {
+        _setRate(_code, _rateInr);
     }
 
-    // ── PM-JAY HBP Catalog (source: NHA official rate list) ────────────────────
-
-    function _initializePMJAYRates() internal {
-        pmjayRates["S030008"] = 10000;   // Coronary Angiography
-        pmjayRates["S060001"] = 80000;   // Total Knee Replacement
-        pmjayRates["S010001"] = 5000;    // General Surgical Consultation
-        pmjayRates["S020001"] = 15000;   // Appendectomy
-        pmjayRates["S040001"] = 50000;   // Cataract Surgery (per eye)
-        pmjayRates["S050001"] = 25000;   // Normal Delivery
-        pmjayRates["S050002"] = 35000;   // Caesarean Section
-        pmjayRates["S070001"] = 100000;  // Coronary Artery Bypass Graft (CABG)
-        pmjayRates["S080001"] = 60000;   // Total Hip Replacement
-        pmjayRates["S090001"] = 20000;   // Haemodialysis (per session)
-    }
-
-    function addProcedureRate(
-        string calldata _code,
-        uint256 _rateInr
-    ) external onlyAdmin {
+    function _setRate(string calldata _code, uint256 _rateInr) internal {
         require(bytes(_code).length > 0, "AutoAdjudication: empty procedure code");
         require(_rateInr > 0, "AutoAdjudication: rate must be > 0");
         pmjayRates[_code] = _rateInr;
         emit ProcedureRateSet(_code, _rateInr);
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────────
+
+    // Loads the claim and checks the caller is the insurer it is bound to.
+    function _claimFor(uint256 _claimId) internal view returns (ClaimSubmission.Claim memory claim) {
+        claim = claimSubmission.getClaim(_claimId);
+        require(claim.claimId != 0, "AutoAdjudication: claim does not exist");
+        require(
+            msg.sender == claim.insurer && roleManager.hasRole(roleManager.INSURER_ROLE(), msg.sender),
+            "AutoAdjudication: only the insurer that issued this policy can act on the claim"
+        );
+    }
+
+    // The member's pool and the policy's co-payment.
+    function _cover(ClaimSubmission.Claim memory _claim)
+        internal
+        view
+        returns (bytes32 poolKey, uint256 remaining, uint8 copayPercent)
+    {
+        PatientRegistry.Member memory m = patientRegistry.getMember(_claim.policyKey, _claim.patientAadhaarHash);
+        (, , remaining) = patientRegistry.getPool(m.poolKey);
+        copayPercent = patientRegistry.getPolicy(_claim.policyKey).copayPercent;
+        poolKey = m.poolKey;
     }
 
     // ── TX 5: Automated adjudication ────────────────────────────────────────────
@@ -131,9 +138,8 @@ contract AutoAdjudication {
         uint256 _claimId,
         string[] calldata _procedureCodes,
         uint256[] calldata _procedureAmounts
-    ) external onlyAdminOrInsurer {
-        ClaimSubmission.Claim memory claim = claimSubmission.getClaim(_claimId);
-        require(claim.claimId != 0, "AutoAdjudication: claim does not exist");
+    ) external {
+        ClaimSubmission.Claim memory claim = _claimFor(_claimId);
         require(
             claim.status == ClaimSubmission.ClaimStatus.FraudScored,
             "AutoAdjudication: fraud score must be recorded before adjudication"
@@ -153,33 +159,44 @@ contract AutoAdjudication {
             "AutoAdjudication: itemisation must include the primary procedure"
         );
 
-        recommendedAmounts[_claimId] = items.recommended;
+        (, uint256 remaining, uint8 copay) = _cover(claim);
+        uint256 payable_ = (items.recommended * (100 - copay)) / 100;
+        if (payable_ > remaining) payable_ = remaining;
+        recommendedAmounts[_claimId] = payable_;
 
         // Rule 1: High fraud score
         if (claim.fraudScore >= FRAUD_THRESHOLD) {
-            _flag(_claimId, "High AI fraud probability score", items.recommended);
+            _flag(_claimId, "High AI fraud probability score", payable_);
             return;
         }
 
-        // Rule 2: A billed procedure is not in the PM-JAY catalog
+        // Rule 2: A billed procedure is not in the package catalog
         if (items.unknownCode) {
-            _flag(_claimId, "Procedure code not found in PM-JAY HBP catalog", items.recommended);
+            _flag(_claimId, "Procedure code not found in PM-JAY HBP catalog", payable_);
             return;
         }
 
-        // Rule 3: A billed procedure exceeds its own PM-JAY ceiling
+        // Rule 3: A billed procedure exceeds its own package rate
         if (items.overCeiling) {
-            _flag(_claimId, "Claimed amount exceeds PM-JAY HBP ceiling rate", items.recommended);
+            _flag(_claimId, "Claimed amount exceeds PM-JAY HBP ceiling rate", payable_);
+            return;
+        }
+
+        // Rule 4: The member's sum insured cannot cover the claim
+        if (claim.claimedAmount > remaining) {
+            _flag(_claimId, "Claim exceeds the remaining sum insured", payable_);
             return;
         }
 
         // All rules passed — approve
-        claimSubmission.updateClaimStatus(
+        claimSubmission.updateClaimStatus(_claimId, ClaimSubmission.ClaimStatus.Adjudicated, "");
+        emit ClaimAdjudicated(
             _claimId,
-            ClaimSubmission.ClaimStatus.Adjudicated,
-            ""
+            true,
+            copay > 0 ? "Approved by AutoAdjudication engine (co-payment applied)" : "Approved by AutoAdjudication engine",
+            payable_,
+            block.timestamp
         );
-        emit ClaimAdjudicated(_claimId, true, "Approved by AutoAdjudication engine", items.recommended, block.timestamp);
     }
 
     function _evaluate(
@@ -211,9 +228,8 @@ contract AutoAdjudication {
 
     // ── TX 6: Insurer final review ───────────────────────────────────────────────
 
-    function insurerReview(uint256 _claimId, bool _approve, uint256 _approvedAmount) external onlyInsurer {
-        ClaimSubmission.Claim memory claim = claimSubmission.getClaim(_claimId);
-        require(claim.claimId != 0, "AutoAdjudication: claim does not exist");
+    function insurerReview(uint256 _claimId, bool _approve, uint256 _approvedAmount) external {
+        ClaimSubmission.Claim memory claim = _claimFor(_claimId);
         require(
             claim.status == ClaimSubmission.ClaimStatus.Adjudicated ||
             claim.status == ClaimSubmission.ClaimStatus.Flagged,
@@ -226,16 +242,18 @@ contract AutoAdjudication {
                 _approvedAmount <= claim.claimedAmount,
                 "AutoAdjudication: cannot approve more than was claimed"
             );
+            (bytes32 poolKey, uint256 remaining, ) = _cover(claim);
+            require(
+                _approvedAmount <= remaining,
+                "AutoAdjudication: approved amount exceeds the remaining sum insured"
+            );
+            patientRegistry.drawCover(poolKey, _approvedAmount);
             approvedAmounts[_claimId] = _approvedAmount;
 
-            string memory note = "";
-            if (_approvedAmount < claim.claimedAmount) {
-                note = "Partially approved by insurer";
-            }
             claimSubmission.updateClaimStatus(
                 _claimId,
                 ClaimSubmission.ClaimStatus.InsurerReviewed,
-                note
+                _approvedAmount < claim.claimedAmount ? "Partially approved by insurer" : ""
             );
         } else {
             approvedAmounts[_claimId] = 0;
@@ -251,21 +269,16 @@ contract AutoAdjudication {
 
     // ── TX 7: Claim settlement ───────────────────────────────────────────────────
 
-    function settleClaim(uint256 _claimId) external onlyInsurer {
-        ClaimSubmission.Claim memory claim = claimSubmission.getClaim(_claimId);
-        require(claim.claimId != 0, "AutoAdjudication: claim does not exist");
+    function settleClaim(uint256 _claimId) external {
+        ClaimSubmission.Claim memory claim = _claimFor(_claimId);
         require(
             claim.status == ClaimSubmission.ClaimStatus.InsurerReviewed,
             "AutoAdjudication: claim must pass insurer review before settlement"
         );
 
-        claimSubmission.updateClaimStatus(
-            _claimId,
-            ClaimSubmission.ClaimStatus.Settled,
-            ""
-        );
+        claimSubmission.updateClaimStatus(_claimId, ClaimSubmission.ClaimStatus.Settled, "");
 
-        // clerkAddress represents the hospital wallet for payment simulation
+        // clerkAddress is the hospital wallet that filed the claim
         emit ClaimSettled(_claimId, claim.clerkAddress, approvedAmounts[_claimId], block.timestamp);
     }
 

@@ -1,0 +1,20 @@
+{
+  "_comment": "Network package-rate card, modelled on the PM-JAY Health Benefit Package (HBP) list. Loaded on-chain by scripts/deploy.js (AutoAdjudication.setProcedureRates) and read by the insurer oracle. Codes and names match the hospital catalog (hospital-portal/backend/scripts/seedCatalog.js). 'sex' marks procedures that only apply to one sex, used by the oracle's clinical-plausibility check.",
+  "procedures": [
+    { "code": "S030008", "name": "Cataract Surgery",                       "category": "Ophthalmology",   "rate": 10000 },
+    { "code": "S040001", "name": "Tonsillectomy",                          "category": "ENT",             "rate": 15000 },
+    { "code": "S050002", "name": "Appendectomy",                           "category": "General Surgery", "rate": 20000 },
+    { "code": "S060001", "name": "Hernia Repair",                          "category": "General Surgery", "rate": 25000 },
+    { "code": "S060002", "name": "Cholecystectomy (Gallbladder Removal)",  "category": "General Surgery", "rate": 30000 },
+    { "code": "S060003", "name": "Hysterectomy",                           "category": "Gynaecology",     "rate": 35000, "sex": "female" },
+    { "code": "S060004", "name": "C-Section Delivery",                     "category": "Gynaecology",     "rate": 25000, "sex": "female" },
+    { "code": "S060005", "name": "Total Knee Replacement",                 "category": "Orthopaedics",    "rate": 80000 },
+    { "code": "S060006", "name": "Total Hip Replacement",                  "category": "Orthopaedics",    "rate": 90000 },
+    { "code": "S070001", "name": "Coronary Artery Bypass Grafting (CABG)", "category": "Cardiology",      "rate": 100000 },
+    { "code": "S070002", "name": "Coronary Angioplasty (PTCA)",            "category": "Cardiology",      "rate": 70000 },
+    { "code": "S080001", "name": "Dialysis (per session)",                 "category": "Nephrology",      "rate": 2000 },
+    { "code": "S090001", "name": "Chemotherapy (per cycle)",               "category": "Oncology",        "rate": 50000 },
+    { "code": "S100001", "name": "Craniotomy",                             "category": "Neurology",       "rate": 150000 },
+    { "code": "S110001", "name": "General Anaesthesia",                    "category": "Anaesthesiology", "rate": 10000 }
+  ]
+}

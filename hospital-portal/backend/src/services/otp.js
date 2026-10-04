@@ -136,9 +136,11 @@ async function sendOtp(contactNumber, otp, email = null) {
   // "Invalid template name. Trial accounts can only use predefined SMS
   // templates."). WhatsApp is outside DLT, so it delivers to Indian numbers on
   // a trial account. The recipient must have joined the Twilio sandbox first.
-  const hasWhatsApp = hasTwilioAuth && process.env.TWILIO_WHATSAPP_FROM
-  const hasSms = hasTwilioAuth && process.env.TWILIO_FROM_NUMBER
-  const hasMsg91 = process.env.SMS_GATEWAY_API_KEY
+  // Phone channels need a number to send to — an email-only member has none.
+  const hasNumber = /^\d{10}$/.test(String(contactNumber || ''))
+  const hasWhatsApp = hasNumber && hasTwilioAuth && process.env.TWILIO_WHATSAPP_FROM
+  const hasSms = hasNumber && hasTwilioAuth && process.env.TWILIO_FROM_NUMBER
+  const hasMsg91 = hasNumber && process.env.SMS_GATEWAY_API_KEY
 
   if (!(hasEmail && email) && !hasWhatsApp && !hasSms && !hasMsg91) {
     console.log(`[OTP] No gateway configured — dev mode. OTP for ${contactNumber}: ${otp}`)

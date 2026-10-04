@@ -7,8 +7,10 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import ClaimList from './pages/claims/ClaimList'
 import ClaimDetail from './pages/claims/ClaimDetail'
-import PatientEnrollment from './pages/patients/PatientEnrollment'
-import PolicyholderList from './pages/patients/PolicyholderList'
+import PolicyList from './pages/policies/PolicyList'
+import NewPolicy from './pages/policies/NewPolicy'
+import PolicyDetail from './pages/policies/PolicyDetail'
+import Analytics from './pages/Analytics'
 import StaffList from './pages/staff/StaffList'
 import Hospitals from './pages/hospitals/Hospitals'
 
@@ -20,12 +22,13 @@ function AppRoutes() {
 
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/analytics" element={<Analytics />} />
         <Route path="/claims" element={<ClaimList />} />
         <Route path="/claims/:id" element={<ClaimDetail />} />
-        <Route path="/patients/enroll" element={<PatientEnrollment />} />
-        <Route path="/patients" element={
-          <ProtectedRoute adminOnly><PolicyholderList /></ProtectedRoute>
-        } />
+        <Route path="/policies" element={<PolicyList />} />
+        <Route path="/policies/new" element={<NewPolicy />} />
+        <Route path="/policies/:policyId" element={<PolicyDetail />} />
+        <Route path="/patients/*" element={<Navigate to="/policies" replace />} />
         <Route path="/admin/staff" element={
           <ProtectedRoute adminOnly><StaffList /></ProtectedRoute>
         } />

@@ -45,7 +45,7 @@ function Row({ label, value }) {
 // to their own on-file contact number, verified before submission is allowed,
 // adds the patient as a fourth attesting party alongside clerk/doctor/insurer —
 // enforced off-chain (in the /claims/submit route) to avoid a contract redeploy.
-function PatientConsent({ contactNumber, aadhaarNumber, policyId, insuranceCompany, patientName, procedureSummary, consent, update }) {
+function PatientConsent({ contactNumber, aadhaarNumber, aadhaarHash, policyId, insurerCode, patientName, procedureSummary, consent, update }) {
   const [sending, setSending] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [sent, setSent] = useState(false)
@@ -65,7 +65,7 @@ function PatientConsent({ contactNumber, aadhaarNumber, policyId, insuranceCompa
     setDevOtp(null)
     try {
       const { data: res } = await sendConsentOtp({
-        contactNumber, aadhaarNumber, policyId, insuranceCompany, patientName, procedureSummary,
+        contactNumber, aadhaarNumber, aadhaarHash, policyId, insurerCode, patientName, procedureSummary,
       })
       setSent(true)
       setSendMessage(res.message || '')
@@ -192,27 +192,27 @@ export default function Step5Review({ data, update, onBack, onSubmit, submitting
 
       <Section title="Insurance">
         <Grid>
-          <Row label="Company" value={insurance?.company} />
+          <Row label="Insurer" value={insurance?.company} />
           <Row label="Policy Number" value={insurance?.policyNumber} />
-          <Row label="Policy Type" value={insurance?.policyType} />
-          {insurance?._verified && <Row label="Coverage" value={fmt(insurance._coverageAmount)} />}
-          {insurance?.isProposerDifferent && <>
-            <Row label="Proposer" value={insurance?.proposerName} />
-            <Row label="Proposer PAN" value={insurance?.proposerPan} />
-          </>}
-          {insurance?.policyType === 'corporate' && <>
-            <Row label="Employee ID" value={insurance?.employeeId} />
-            <Row label="Employer" value={insurance?.employerName} />
-          </>}
+          <Row label="Policy Type" value={insurance?._verification?.policyTypeLabel || insurance?.policyType} />
+          <Row label="Held by" value={insurance?._verification?.holderName} />
+          <Row label="Member ID" value={insurance?._verification?.member?.memberId} />
+          {insurance?.memberRef && <Row label={insurance?._verification?.memberRef?.label || 'ID on card'} value={insurance.memberRef} />}
+          {insurance?._verification?.remaining != null && <Row label="Sum insured left" value={`${fmt(insurance._verification.remaining)} of ${fmt(insurance._verification.sumInsured)}`} />}
+          {insurance?._verification?.copayPercent > 0 && <Row label="Co-payment" value={`${insurance._verification.copayPercent}%`} />}
         </Grid>
-        {insurance?._verified && (
+        {insurance?._verification?.valid ? (
           <div className="mt-3 flex items-center gap-1.5 text-xs text-green-700">
-            <CheckCircle2 className="w-3.5 h-3.5" /> Policy verified with insurer
+            <CheckCircle2 className="w-3.5 h-3.5" /> Cover confirmed by the insurer for this admission
+          </div>
+        ) : (
+          <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-600">
+            <AlertCircle className="w-3.5 h-3.5" /> Cover not confirmed — go back to the insurance step
           </div>
         )}
-        {!insurance?._verified && (
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-600">
-            <AlertCircle className="w-3.5 h-3.5" /> Policy not verified — proceeding without confirmation
+        {totalAmount > (insurance?._verification?.remaining ?? Infinity) && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-amber-700">
+            <AlertCircle className="w-3.5 h-3.5" /> The claim is more than the sum insured left — the insurer can pay at most {fmt(insurance._verification.remaining)}.
           </div>
         )}
       </Section>
@@ -237,6 +237,8 @@ export default function Step5Review({ data, update, onBack, onSubmit, submitting
         <Grid>
           <Row label="Diagnosis" value={medical?.diagnosis} />
           <Row label="ICD Code" value={medical?.icdCode} />
+          <Row label="Cause" value={{ illness: 'Illness', accident: 'Accident / injury', maternity: 'Maternity' }[medical?.hospitalisationCause] || 'Illness'} />
+          {medical?.mlcNumber && <Row label="MLC / FIR" value={medical.mlcNumber} />}
           {medical?.isTransferCase && <Row label="Transferred From" value={medical?.transferHospitalName} />}
           {medical?.isPlannedSurgery && <Row label="Note" value="Planned Surgery" />}
         </Grid>
@@ -280,8 +282,9 @@ export default function Step5Review({ data, update, onBack, onSubmit, submitting
       <PatientConsent
         contactNumber={admission?.contactNumber}
         aadhaarNumber={data.aadhaarNumber || data.patient?.aadhaarNumber}
+        aadhaarHash={data.aadhaarHash || undefined}
         policyId={data.insurance?.policyNumber}
-        insuranceCompany={data.insurance?.company}
+        insurerCode={data.insurance?.insurerCode}
         patientName={patient?.name}
         procedureSummary={primaryProcedure?.name}
         consent={data.consent}

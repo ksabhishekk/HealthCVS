@@ -63,6 +63,17 @@ const ClaimSchema = new mongoose.Schema(
     // decided. Comparing the two over time shows which signals reviewers agree
     // with — previously decisions were never compared against the flags at all.
     firedSignals: [{ type: String }],
+    // Checks that could not run ("could not verify"), and the model scores
+    // behind the final number — both feed the analytics page.
+    unverifiedSignals: [{ type: String }],
+    scoreComponents: { type: mongoose.Schema.Types.Mixed, default: null },
+
+    // ── Policy the claim is made under (from the oracle's member lookup) ─────
+    policyId:     { type: String, default: null },
+    policyType:   { type: String, default: null },
+    memberName:   { type: String, default: null },
+    relationship: { type: String, default: null },
+
     reviewDecision: {
       approved:       { type: Boolean },
       approvedAmount: { type: Number },

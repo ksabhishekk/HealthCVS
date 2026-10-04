@@ -23,12 +23,19 @@ const fs         = require('fs')
 const os         = require('os')
 const path       = require('path')
 
-const { getContracts, updateFraudScoreOnBlockchain } = require('./services/blockchain')
+const { getContracts, updateFraudScoreOnBlockchain, isOurClaim, getMemberCover } = require('./services/blockchain')
 const Claim = require('./models/Claim')
+const Policy = require('./models/Policy')
+const PolicyMember = require('./models/PolicyMember')
 const { createFindings, applyFindings } = require('./services/findings')
 const { verifyHospitalIdentity } = require('./services/empanelment')
 const { checkContactReuse, checkDoctorTrackRecord } = require('./services/patientSignals')
 const { checkSupportingDocuments } = require('./services/supportingDocs')
+const { TYPE_INFO } = require('./services/policyRules')
+const { compareIdentity, sameRef } = require('./services/identity')
+const RATE_CARD = require('../../../config/procedure_rates.json').procedures
+
+const DAY_MS = 24 * 60 * 60 * 1000
 
 // ── IPFS upload via Pinata ────────────────────────────────────────────────────
 async function uploadToIPFS(payload) {
@@ -61,17 +68,19 @@ async function uploadToIPFS(payload) {
 // tabular model's most fraud-relevant behavioral features were effectively
 // inert. This computes them live from ClaimSubmission's own view functions.
 async function computeOnChainSignals(claimId, onChain) {
-  const fallback = { daysSinceLastClaim: 999, claimsThisYear: 0, hospitalRejectionRate: 0.1, duplicateClaimId: null, duplicateReason: null }
+  const fallback = { daysSinceLastClaim: 999, claimsThisYear: 0, hospitalRejectionRate: 0.1, duplicateClaimId: null, duplicateReason: null, parallelClaims: [] }
   const { claimSubmission } = getContracts()
   if (!claimSubmission || !onChain?.patientAadhaarHash) return fallback
 
   try {
     const now = Date.now()
-    const oneYearMs = 365 * 24 * 60 * 60 * 1000
+    const oneYearMs = 365 * DAY_MS
     const currentCreatedMs = Number(onChain.createdAt) * 1000
+    const currentAdmissionMs = Number(onChain.admissionDate) * 1000
     const currentProcedureCode = onChain.procedureCode
 
-    // Patient claim history via the existing getPatientClaims() view function.
+    // The person's claim history across every policy they hold — with any
+    // insurer on the network, since the ledger is shared.
     const patientClaimIds = (await claimSubmission.getPatientClaims(onChain.patientAadhaarHash))
       .map(Number)
       .filter(id => id !== claimId)
@@ -80,6 +89,7 @@ async function computeOnChainSignals(claimId, onChain) {
     let mostRecentPriorMs = null
     let duplicateClaimId = null
     let duplicateReason = null
+    const parallelClaims = []
 
     for (const id of patientClaimIds) {
       try {
@@ -88,19 +98,31 @@ async function computeOnChainSignals(claimId, onChain) {
         if (now - createdMs <= oneYearMs) claimsThisYear++
         if (mostRecentPriorMs === null || createdMs > mostRecentPriorMs) mostRecentPriorMs = createdMs
 
-        // Duplicate-episode signal: same patient + same procedure code submitted
-        // within 3 days of this claim — a common real fraud pattern (the same
-        // treatment episode billed twice, or split across multiple claims).
-        // Kept informational-only (surfaced in the XAI panel, does not move the
-        // score) because legitimate recurring care — dialysis sessions,
-        // chemo cycles — also produces genuine same-procedure repeats, and a
-        // false auto-penalty there would be worse than a missed flag.
-        if (
-          c.procedureCode === currentProcedureCode &&
-          Math.abs(currentCreatedMs - createdMs) <= 3 * 24 * 60 * 60 * 1000
-        ) {
+        const sameEpisode = Math.abs(Number(c.admissionDate) * 1000 - currentAdmissionMs) <= 2 * DAY_MS
+        const rejected = Number(c.status) === 7
+
+        if (c.policyKey !== onChain.policyKey) {
+          // The same hospitalisation claimed under another policy. Holding two
+          // policies is legitimate, but together they may pay no more than the
+          // bill — claiming the full bill from both is double-dipping, and only
+          // a ledger shared between insurers can see both claims.
+          if (sameEpisode && !rejected) {
+            parallelClaims.push({
+              claimId: id,
+              policyKey: c.policyKey,
+              insurer: c.insurer,
+              ourPolicy: isOurClaim(c),
+              claimedAmount: Number(c.claimedAmount),
+              status: Number(c.status),
+            })
+          }
+        } else if (c.procedureCode === currentProcedureCode && (sameEpisode || Math.abs(currentCreatedMs - createdMs) <= 3 * DAY_MS)) {
+          // Duplicate-episode signal: same policy, same procedure, same
+          // admission (or filed within 3 days) — the same treatment billed
+          // twice or split across claims. Informational only: recurring care
+          // (dialysis, chemotherapy cycles) produces genuine repeats.
           duplicateClaimId = id
-          duplicateReason = `Claim #${id} — same patient and procedure code (${currentProcedureCode}), submitted within 3 days of this claim.`
+          duplicateReason = `Claim #${id} — same patient, policy and procedure code (${currentProcedureCode}) for the same admission.`
         }
       } catch {}
     }
@@ -115,6 +137,10 @@ async function computeOnChainSignals(claimId, onChain) {
     // Fine at prototype scale; would need an off-chain index at real volume.
     let hospitalClaims = 0
     let hospitalRejected = 0
+    // The same bill file on another claim. IPFS addresses files by their
+    // content, so an identical CID means byte-for-byte the same document —
+    // across every hospital and insurer on the network.
+    const reusedBill = []
     const total = Number(await claimSubmission.getTotalClaims())
     for (let id = 1; id <= total; id++) {
       if (id === claimId) continue
@@ -124,14 +150,122 @@ async function computeOnChainSignals(claimId, onChain) {
           hospitalClaims++
           if (Number(c.status) === 7) hospitalRejected++  // ClaimStatus.Rejected
         }
+        if (onChain.cidBill && c.cidBill === onChain.cidBill) reusedBill.push({ claimId: id, status: Number(c.status) })
       } catch {}
     }
     const hospitalRejectionRate = hospitalClaims > 0 ? hospitalRejected / hospitalClaims : fallback.hospitalRejectionRate
 
-    return { daysSinceLastClaim, claimsThisYear, hospitalRejectionRate, duplicateClaimId, duplicateReason }
+    return { daysSinceLastClaim, claimsThisYear, hospitalRejectionRate, duplicateClaimId, duplicateReason, parallelClaims, reusedBill }
   } catch (e) {
     console.warn(`[Oracle] On-chain behavioral signal computation failed, using defaults: ${e.message}`)
     return fallback
+  }
+}
+
+// ── The claim against the policy and the insurer's record of the member ─────
+// TX2 already proved on-chain that the patient was a covered member on the
+// admission date. What the chain cannot know is whether the hospital's
+// description of the patient matches the person the insurer covers, and
+// whether the claim respects the policy's terms.
+async function checkAgainstPolicy({ onChain, ipfsData, signals }) {
+  const findings = []
+  const add = (kind, key, floor, label) => findings.push({ kind, key, floor, label })
+  if (!onChain?.policyKey) return { findings, context: null }
+
+  const [policy, member] = await Promise.all([
+    Policy.findOne({ policyKey: onChain.policyKey }).lean(),
+    PolicyMember.findOne({ policyKey: onChain.policyKey, aadhaarHash: onChain.patientAadhaarHash }).lean(),
+  ])
+  if (!policy || !member) {
+    add('unverified', 'member_record_missing', 60, 'The insurer has no member record for this patient on this policy, so the patient details could not be checked against it.')
+    return { findings, context: null }
+  }
+  const info = TYPE_INFO[policy.policyType]
+  const admission = new Date(Number(onChain.admissionDate) * 1000)
+
+  // 1. Is this the person the insurer covers?
+  const submitted = ipfsData?.patient || {}
+  const identity = compareIdentity({ name: submitted.name, dateOfBirth: submitted.dateOfBirth, gender: submitted.gender }, member)
+  if (identity.mismatched.length) {
+    add('confirmed', 'member_identity_mismatch', 75,
+      `The patient's ${identity.mismatched.join(', ')} on the claim do${identity.mismatched.length === 1 ? 'es' : ''} not match the insurer's record of this member — the claim may be for someone else using the member's Aadhaar.`)
+  }
+
+  // 2. Employee / group-member / PM-JAY ID, as printed on the health card.
+  let memberRef = null
+  if (info.memberRef) {
+    const expected = member[info.memberRef.field]
+    const given = ipfsData?.insurance?.memberRef ?? ipfsData?.insurance?.employeeId ?? ''
+    memberRef = { label: info.memberRef.label, given: given || null, matches: given ? sameRef(given, expected) : null }
+    if (expected && given && !memberRef.matches) {
+      add('confirmed', 'member_ref_mismatch', 75,
+        `The ${info.memberRef.label} on the claim (${given}) is not the one on this member's record — check the health card.`)
+    } else if (expected && !given) {
+      add('unverified', 'member_ref_missing', 0, `The claim does not give the member's ${info.memberRef.label}, so it could not be matched.`)
+    }
+  }
+
+  // 3. Initial waiting period: illness in the first N days of cover is not
+  // payable; accidents are. Early claims are also a known fraud pattern —
+  // policies bought for a hospitalisation that was already planned.
+  const cause = ipfsData?.medical?.hospitalisationCause || 'illness'
+  const daysCovered = Math.floor((admission - new Date(member.coverStart)) / DAY_MS)
+  const waiting = {
+    days: policy.waitingPeriodDays,
+    daysCovered,
+    cause,
+    applies: policy.waitingPeriodDays > 0 && daysCovered < policy.waitingPeriodDays && cause !== 'accident',
+  }
+  if (waiting.applies) {
+    // 75, so the contract will not auto-approve it: an illness claim inside
+    // the waiting period is not payable under the policy wording at all.
+    add('confirmed', 'waiting_period', 75,
+      `Admitted ${daysCovered} day(s) after cover began — inside the ${policy.waitingPeriodDays}-day initial waiting period, and the hospitalisation is not recorded as an accident.`)
+  }
+
+  // 4. Procedures that only apply to one sex, against the sex on the
+  // insurer's record (not the hospital's form, which the fraudster controls).
+  const codes = (ipfsData?.medical?.procedures || []).map(p => p.code).filter(Boolean)
+  if (!codes.length && onChain.procedureCode) codes.push(onChain.procedureCode)
+  for (const code of codes) {
+    const rate = RATE_CARD.find(r => r.code === code)
+    if (rate?.sex && member.gender !== 'other' && member.gender !== rate.sex) {
+      add('confirmed', 'sex_procedure_mismatch', 75,
+        `${rate.name} (${code}) is a procedure for ${rate.sex} patients, but this member is recorded as ${member.gender}.`)
+    }
+  }
+
+  // 5. The same hospitalisation claimed under another policy.
+  for (const p of signals?.parallelClaims || []) {
+    const where = p.ourPolicy ? 'another of our policies' : `a policy with another insurer (${p.insurer.slice(0, 6)}…${p.insurer.slice(-4)})`
+    add('confirmed', 'parallel_claim', 60,
+      `Claim #${p.claimId} for the same person and admission was filed under ${where} for ₹${p.claimedAmount.toLocaleString('en-IN')}. Together the claims may pay no more than the bill — ask for the other settlement letter.`)
+  }
+
+  let cover = null
+  try { cover = await getMemberCover(onChain.policyKey, onChain.patientAadhaarHash) } catch {}
+
+  return {
+    findings,
+    context: {
+      policyId: policy.policyId,
+      policyType: policy.policyType,
+      policyTypeLabel: info.label,
+      planName: policy.planName,
+      holderName: policy.policyType === 'corporate' ? policy.corporate?.companyName
+        : policy.policyType === 'group' ? policy.group?.groupName : policy.proposer?.name,
+      memberId: member.memberId,
+      memberName: member.name,
+      relationship: member.relationship,
+      coverStart: member.coverStart,
+      sharedBy: info.poolLabel,
+      sumInsured: cover?.sumInsured ?? policy.sumInsured,
+      remaining: cover?.remaining ?? null,
+      copayPercent: policy.copayPercent,
+      identity,
+      memberRef,
+      waiting,
+    },
   }
 }
 
@@ -423,6 +557,7 @@ async function runClaimPipeline(claimId) {
   if (!cvAvailable) {
     console.warn(`[Oracle] CV unavailable — scoring on tabular + NLP only, weights renormalised (${usedWeight.toFixed(2)})`)
   }
+  const baseScore = finalScore  // model ensemble alone, before findings — kept for analytics
 
   // ── 4b. Findings, accumulated ────────────────────────────────────────────────
   // Each finding carries a floor (the minimum severity it justifies) and a kind.
@@ -463,6 +598,10 @@ async function runClaimPipeline(claimId) {
     findings.confirmed('duplicate_documents', 60,
       `The same file was submitted for ${duplicateDocuments.map(d => `${d.count} slots (${d.slots.join(', ')})`).join('; ')}`)
   }
+  if (signals.reusedBill?.length) {
+    findings.confirmed('reused_document', 75,
+      `This exact bill file (same IPFS content address) was already submitted with claim${signals.reusedBill.length > 1 ? 's' : ''} #${signals.reusedBill.map(r => r.claimId).join(', #')}. One bill can support one claim.`)
+  }
 
   // Hospital identity: empanelled, active, and did one of its own registered
   // wallets sign TX2? A code can be typed; a signature cannot be forged.
@@ -494,6 +633,16 @@ async function runClaimPipeline(claimId) {
   if (doctorRecord?.concerning) findings.confirmed('doctor_track_record', 60, doctorRecord.reason)
 
   // Every supporting document, not just the bill.
+  // The PAN the insurer holds for the member is authoritative; the hospital's
+  // form is the fallback for members enrolled without one.
+  let memberPan = null
+  try {
+    if (onChain?.policyKey) {
+      memberPan = (await PolicyMember.findOne({ policyKey: onChain.policyKey, aadhaarHash: onChain.patientAadhaarHash })
+        .select('panNumber').lean())?.panNumber || null
+    }
+  } catch {}
+
   let supportingCheck = { documents: [], findings: [] }
   try {
     supportingCheck = await checkSupportingDocuments({
@@ -501,7 +650,7 @@ async function runClaimPipeline(claimId) {
       aiUrl: AI,
       gateway: process.env.PINATA_GATEWAY || 'gateway.pinata.cloud',
       aadhaarHash: onChain?.patientAadhaarHash,
-      patientPan: ipfsData?.patient?.panNumber,
+      patientPan: memberPan || ipfsData?.patient?.panNumber,
       policyNumber: ipfsData?.insurance?.policyNumber,
       diagnosisTerms: String(ipfsData?.medical?.diagnosis || '').split(/[^A-Za-z]+/).filter(w => w.length >= 5).join(','),
     })
@@ -509,6 +658,13 @@ async function runClaimPipeline(claimId) {
     console.warn(`[Oracle] Supporting document checks skipped: ${e.message}`)
   }
   for (const f of supportingCheck.findings) {
+    if (f.kind === 'confirmed') findings.confirmed(f.key, f.floor, f.label)
+    else findings.unverified(f.key, f.floor, f.label)
+  }
+
+  // The policy and the insurer's own record of this member.
+  const policyCheck = await checkAgainstPolicy({ onChain, ipfsData, signals })
+  for (const f of policyCheck.findings) {
     if (f.kind === 'confirmed') findings.confirmed(f.key, f.floor, f.label)
     else findings.unverified(f.key, f.floor, f.label)
   }
@@ -561,6 +717,7 @@ async function runClaimPipeline(claimId) {
       domainMatch,
       expectedDepartments,
       domainReason,
+      policyContext:       policyCheck.context,
     },
     shapExplanations: tabRes.data.shap_explanations || [],
     nlpReason:        nlpRes.data.nlp_reason        || '',
@@ -574,6 +731,7 @@ async function runClaimPipeline(claimId) {
     },
     duplicateClaimId: signals.duplicateClaimId,
     duplicateReason:  signals.duplicateReason,
+    parallelClaims:   signals.parallelClaims,
     timestamp:        new Date().toISOString(),
   }
 
@@ -593,6 +751,23 @@ async function runClaimPipeline(claimId) {
   claim.hospitalRejectionRate = signals.hospitalRejectionRate
   claim.status                = 'ai_scored'
   claim.firedSignals          = findings.items.filter(f => f.kind === 'confirmed').map(f => f.key)
+  claim.unverifiedSignals     = findings.items.filter(f => f.kind === 'unverified').map(f => f.key)
+  claim.scoreComponents       = {
+    tabular:    tabularScore,
+    xgboost:    tabRes.data.xgboost_score ?? null,
+    anomaly:    tabRes.data.anomaly_score ?? null,
+    cv:         cvAvailable ? cvScore : null,
+    nlp:        nlpScore,
+    base:       baseScore,
+    final:      finalScore,
+    escalation: scoring.escalation,
+  }
+  if (policyCheck.context) {
+    claim.policyId     = policyCheck.context.policyId
+    claim.policyType   = policyCheck.context.policyType
+    claim.memberName   = policyCheck.context.memberName
+    claim.relationship = policyCheck.context.relationship
+  }
   await claim.save()
 
   // 7. TX4 — write fraud score on-chain via existing blockchain.js
@@ -640,7 +815,8 @@ async function catchUpMissedClaims() {
     for (let id = 1; id <= total; id++) {
       try {
         const c = await claimSubmission.getClaim(id)
-        if (Number(c.status) === 1) waiting.push(id)   // ClaimStatus.DoctorAuthenticated
+        // ClaimStatus.DoctorAuthenticated, on one of our policies
+        if (Number(c.status) === 1 && isOurClaim(c)) waiting.push(id)
       } catch {}
     }
     if (!waiting.length) {
@@ -667,6 +843,16 @@ function startOracleListener() {
 
   claimSubmission.on('DoctorAuthenticated', async (claimId) => {
     const id = Number(claimId)
+    // On a shared network other insurers' claims raise this event too; each
+    // insurer's oracle scores only the claims made under its own policies.
+    try {
+      if (!isOurClaim(await claimSubmission.getClaim(id))) {
+        console.log(`[Oracle] Claim #${id} is under another insurer's policy — not ours to score.`)
+        return
+      }
+    } catch (e) {
+      console.warn(`[Oracle] Could not read claim #${id}: ${e.message}`)
+    }
     console.log(`\n[Oracle] ▶ Event: DoctorAuthenticated — Claim #${id}. Starting AI pipeline...`)
     await scoreWithRetries(id, 'event')
   })

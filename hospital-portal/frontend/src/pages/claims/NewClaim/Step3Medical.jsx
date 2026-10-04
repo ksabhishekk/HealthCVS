@@ -173,6 +173,25 @@ export default function Step3Medical({ data, update, onNext, onBack }) {
               onChange={e => setMed({ icdCode: e.target.value.toUpperCase() })}
               placeholder="e.g. I21, K35" />
           </div>
+          <div>
+            <label className="label">Cause of hospitalisation <span className="text-red-500">*</span></label>
+            <select className="input" value={med.hospitalisationCause || 'illness'} onChange={e => setMed({ hospitalisationCause: e.target.value })}>
+              <option value="illness">Illness</option>
+              <option value="accident">Accident / injury</option>
+              <option value="maternity">Maternity</option>
+            </select>
+          </div>
+          {med.hospitalisationCause === 'accident' && (
+            <div className="col-span-2">
+              <label className="label">MLC / FIR number <span className="text-gray-400">(medico-legal case, if registered)</span></label>
+              <input className="input" value={med.mlcNumber || ''} onChange={e => setMed({ mlcNumber: e.target.value })} />
+            </div>
+          )}
+          {data.insurance?._verification?.waitingPeriod?.admissionWithin && med.hospitalisationCause !== 'accident' && (
+            <div className="col-span-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              This admission is inside the policy's {data.insurance._verification.waitingPeriod.days}-day initial waiting period. An illness claim is not payable then — only an accident is. The insurer will flag it.
+            </div>
+          )}
         </div>
       </div>
 
