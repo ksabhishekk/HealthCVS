@@ -1,73 +1,136 @@
-# HealthCVS: Blockchain Implementation Plan
+# HealthCVS: Blockchain Layer
 
-This plan outlines the architecture and development phases for the HealthCVS blockchain layer, ensuring it meets the unique requirements of your project (zero off-chain DB, granular audit trails, India-specific context, and cost efficiency).
+How the blockchain layer is designed and built, and what is still open.
 
-## 1. Core Technology Stack
-*   **Blockchain Network:** Polygon Amoy Testnet. *(Note: Polygon Mumbai was deprecated in April 2024. Amoy is the official replacement, offering the same free, fast, and low-gas environment).*
-*   **Smart Contract Development:** Hardhat (Solidity).
-*   **Web3 Library:** web3.js.
-*   **Frontend Web:** React (Vite) + Material UI.
-*   **Frontend Mobile (Patient):** React Native.
-*   **Storage:** IPFS via Pinata.
-*   **Identity:** MetaMask (for hospital/insurer staff signing) and DigiLocker API (for patient Aadhaar verification).
+**Status (October 2026):** all four contracts and the full seven-transaction lifecycle are built and tested
+(36 Hardhat tests) and run end to end on a local Ganache chain with demo data. For setup commands see the
+[README](README.md).
 
-## 2. Smart Contract Architecture (Modular)
-Since we have no off-chain database, the smart contracts are the sole source of truth and state. A modular architecture is best practice for upgradeability and managing complex logic.
+---
 
-*   `RoleManager.sol`: Handles Role-Based Access Control (RBAC). Defines who is an Admin, Insurer, Hospital Clerk, or Doctor.
-*   `PatientRegistry.sol`: Maps a hashed Aadhaar number (verified via DigiLocker) to a wallet address and an active insurance policy ID.
-*   `ClaimSubmission.sol`: The core data structure. Stores claim details, procedure codes, and the IPFS CIDs for attached documents.
-*   `AutoAdjudication.sol`: The logic engine. Contains the rules comparing the claimed amount against the PM-JAY Health Benefit Package (HBP) catalog.
+## 1. Stack
 
-## 3. The 7-Step Transaction Audit Trail
-This is your major differentiator. Instead of a simple "submit -> approve" flow, every stage of the real-world workflow is recorded immutably on-chain.
+| Layer               | Technology                                                                  |
+| ------------------- | --------------------------------------------------------------------------- |
+| Contracts           | Solidity 0.8.20, OpenZeppelin `AccessControl`                               |
+| Dev and test        | Hardhat (36 contract tests)                                                 |
+| Local chain         | Ganache                                                                     |
+| Client library      | ethers.js                                                                   |
+| Document storage    | IPFS through Pinata, referenced on-chain by content identifier (CID)        |
+| Portals             | React 18 + Vite frontends, Express backends                                 |
+| Oracle              | In-process worker inside the insurer backend, calling the FastAPI AI service |
 
-1.  **Patient Policy Registration (TX 1):** Insurer registers a patient, linking their hashed Aadhaar to a policy.
-2.  **Claim Initialization (TX 2):** Hospital Clerk creates the claim. They upload documents to IPFS and store the resulting CIDs on-chain alongside the claimed amount and PM-JAY procedure code.
-3.  **Doctor Authentication (TX 3):** The assigned Doctor logs in via MetaMask, reviews the claim, and submits a transaction to cryptographically sign off on the medical necessity.
-4.  **AI Fraud Score Oracle Update (TX 4):** A dedicated transaction where an off-chain AI model (via an Oracle script) writes a fraud probability score to the claim record. *(We will implement this as a placeholder TX for now).*
-5.  **Rule-Based Adjudication (TX 5):** The `AutoAdjudication` contract executes its logic, checking policy limits and the PM-JAY rate catalog.
-6.  **Insurer Final Review (TX 6):** Insurer submits a transaction to confirm the automated decision or manually override a flagged claim.
-7.  **Claim Settlement (TX 7):** A transaction simulating the payment (transferring mock tokens) to the hospital, officially closing the claim.
+---
 
-## 4. Data Storage Strategy (Strictly On-Chain + IPFS)
-With no MongoDB or Postgres database, we split data for gas efficiency:
+## 2. Smart contracts
 
-**IPFS (via Pinata):**
-*   Images/PDFs of Bills, Prescriptions, and Discharge Summaries.
-*   Lengthy JSON metadata (e.g., line-by-line itemized bill details) to avoid high gas costs.
+| Contract             | Responsibility                                                                                                      | TX     |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------- | ------ |
+| `RoleManager`        | Built on OpenZeppelin `AccessControl`. Defines the admin, insurer, hospital-clerk and doctor roles; every other contract checks permissions here | none |
+| `PatientRegistry`    | Policies and insured members, keyed by Aadhaar hash; sum-insured pools, member status and cover periods            | TX1    |
+| `ClaimSubmission`    | The claim record and its status machine (eight statuses), document CIDs, fraud score, and an event for every change | TX2–TX4 |
+| `AutoAdjudication`   | The PM-JAY package-rate card, itemised adjudication, the fraud threshold, and recommended and approved amounts      | TX5–TX7 |
 
-**On-Chain (Polygon Amoy):**
-*   IPFS CIDs (categorized explicitly: `cid_bill`, `cid_prescription`).
-*   Patient ID (Aadhaar Hash).
-*   Total Claimed Amount (uint256).
-*   PM-JAY Procedure Code (string).
-*   Current Status (Enum: Submitted, Authenticated, Adjudicated, Paid).
-*   Wallet addresses (msg.sender) of the clerk and doctor for accountability.
+Contract sources are in [`contracts/`](contracts) and tests in [`test/`](test). Enrolment rules that are easier to
+express off-chain (relationships, ages, holder identifiers) live in
+`insurance-portal/backend/src/services/policyRules.js`; everything about money and membership status is enforced
+on-chain.
 
-## 5. PM-JAY Rate Benchmarking
-The smart contract will contain a mapping of PM-JAY procedure codes to their ceiling rates.
+---
 
-*Sample Catalog (To be injected into the contract):*
-*   `S030008` (Coronary Angiography) -> Limit: ₹10,000
-*   `S060001` (Total Knee Replacement) -> Limit: ₹80,000
+## 3. The seven-transaction audit trail
 
-*On-Chain Fraud Detection Logic (Without AI):*
-```solidity
-if (claim.amount > pmjayRates[claim.procedureCode]) {
-    claim.status = Status.Flagged;
-    claim.flagReason = "Exceeds PM-JAY HBP Ceiling";
-}
-```
+Every stage of the real-world workflow is recorded as its own signed, timestamped transaction.
 
-## 6. Frontend & Integration Flow
-1.  **Patient App (React Native):** Uses the DigiLocker OAuth 2.0 API. The user logs in to DigiLocker, grants consent, and the app fetches their Aadhaar XML. The Aadhaar number is hashed locally and sent to the blockchain to act as their identity.
-2.  **Hospital Portal (React/Vite):** Staff use MetaMask. The web app uses `web3.js` to read from the blockchain (populating the dashboard via contract events and view functions) and write to it (submitting claims, doctor authentication).
+| TX | Stage                   | Signed by                    | What is written on-chain                                                                               |
+| -- | ----------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 1  | Policy and enrolment    | Insurer                      | Policy and each insured member, keyed by the keccak-256 hash of the Aadhaar number                     |
+| 2  | Claim submission        | Hospital clerk               | PM-JAY procedure code, total claimed amount, IPFS CIDs of bill, prescription and metadata; refused unless the patient was a covered member on the admission date |
+| 3  | Doctor authentication   | Doctor role                  | Medical sign-off; emits the `DoctorAuthenticated` event that wakes the AI oracle                       |
+| 4  | Fraud score             | Oracle wallet                | Score from 0 to 100; the explanation is pinned to IPFS and referenced by CID                           |
+| 5  | Automated adjudication  | Insurer backend, contract logic | Every billed procedure checked against its ceiling; claims scoring 75 or more are flagged            |
+| 6  | Insurer review          | Insurer reviewer             | Approve in full, approve a reduced amount, or reject; approval is drawn from the member's sum insured, never beyond it |
+| 7  | Settlement              | Insurer (finance)            | Claim marked Settled and the approved amount recorded; simulated, no funds move                          |
 
-## 7. Next Steps for Implementation
-If you approve this plan, we can begin coding immediately. I recommend tackling this in phases:
+Every claim is bound to the insurer that issued its policy; only that insurer can act on it at TX5–TX7.
 
-*   **Phase 1:** Setup the Hardhat project and write the Solidity Smart Contracts (`PatientRegistry`, `ClaimSubmission`, `AutoAdjudication`, `RoleManager`).
-*   **Phase 2:** Write deployment scripts and deploy to Polygon Amoy Testnet.
-*   **Phase 3:** Set up the Vite/React frontend and implement web3.js + MetaMask connection.
-*   **Phase 4:** Build the IPFS (Pinata) upload logic and the UI for the 7-step transaction flow.
+**Claim IDs.** They restart at 1 on a fresh deployment. After redeploying, run the stale-claim archive script
+described in the README so old records do not collide with new ones.
+
+---
+
+## 4. From doctor sign-off to fraud score (TX3 to TX4)
+
+TX4 is the only transaction fired automatically. The oracle worker reaches the same scoring pipeline by three routes
+and guards against scoring a claim twice:
+
+1. **Live event:** an ethers subscription fires the moment TX3 confirms.
+2. **Startup catch-up scan:** on start, every claim still waiting for a score is picked up, which recovers events missed while offline.
+3. **Manual re-run:** an admin can trigger scoring from the claim page.
+
+The worker then loads the claim from the chain and its metadata from IPFS, calls the AI service for document
+forensics, bill reconciliation, the tabular fraud model, medical-language checks and cross-claim checks, combines
+them into one 0–100 score, pins the explanation to IPFS, and writes the score on-chain as TX4. The chain write
+happens last, so the portal can briefly hold a score the chain does not yet have, but never the reverse. On failure
+the worker retries three times with backoff, then marks the claim for the reviewer; a failed IPFS pin does not block
+TX4.
+
+How the score is computed is covered in the Level 2 diagram in [`docs/`](docs).
+
+At TX5 the contract applies three checks before a claim can be auto-approved: fraud score below 75, every procedure
+present in the rate catalog, and no claimed amount above its ceiling. A claim that fails any check goes to manual
+review, and even auto-approved claims still pass through insurer review at TX6.
+
+---
+
+## 5. Where data lives
+
+| Where                  | What                                                                                                            |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **On-chain**           | Aadhaar hash, policy and member status, procedure code, claimed amount, document CIDs, clerk address (who signed TX2), fraud score, claim status, approved amount, and an event for every change |
+| **IPFS (Pinata)**      | Bill, prescription and discharge documents; the claim metadata bundle (itemised procedures, doctors, hospital, insurance and consent details); the AI explanation JSON |
+| **MongoDB (per portal)** | Working data for the portals: staff logins, doctors, procedure catalogs, consent records, and the insurer's view of claims (scores, findings, reviews) |
+
+Principles behind the split:
+
+- **No personal data on-chain.** Only the Aadhaar hash is stored; large or sensitive documents stay on IPFS and the chain keeps only their content addresses, which also keeps gas costs low.
+- **The chain is the record.** Claim state transitions, signers and timestamps are authoritative on-chain; MongoDB holds a working copy that can be rebuilt from the chain and IPFS.
+- **Accountability by address.** The wallet that performed each step is recorded, so each action can be attributed to a role.
+
+---
+
+## 6. Rules the contracts enforce
+
+- **Cover on the admission date.** A claim is refused at TX2 unless the patient was a covered member on that date.
+- **Sum insured.** Approval is drawn from the member's (or family's) shared pool and can never exceed what remains.
+- **Package rates.** Each billed procedure is checked against the PM-JAY rate card loaded on-chain at deployment
+  (from [`config/procedure_rates.json`](config/procedure_rates.json)), and the government policy type makes those rates binding.
+- **Fraud threshold.** A score of 75 or more flags the claim for human attention.
+- **Insurer binding.** A claim can only be acted on at TX5–TX7 by the insurer that issued its policy.
+- **Role separation.** Hospital staff, doctors, the oracle and insurer staff each hold distinct roles in `RoleManager`.
+
+Policy types supported: individual, family floater, corporate (employer group), group (non-employer) and government
+(AB PM-JAY).
+
+---
+
+## 7. Running it
+
+Deployment is one script: `start-local.ps1` deploys the contracts to Ganache, loads the rate card, grants roles and
+writes the contract addresses into both portal `.env` files. Full steps, prerequisites and demo data are in the
+[README](README.md).
+
+---
+
+## 8. Known limitations and next steps
+
+- **Aadhaar is checked for format and checksum only.** Full confirmation needs UIDAI e-KYC integration, which is the first next step. DigiLocker is not integrated.
+- **Doctors do not sign with personal keys.** The hospital wallet signs TX3 on the doctor's behalf, so TX3 attests the portal action, not a personal signature.
+- **Settlement is simulated.** TX7 records the claim as settled; it does not transfer any currency.
+- **Nothing on-chain proves the treatment happened.** The system verifies documents and rules, not clinical reality.
+- **The tabular fraud model learned from synthetic data;** real claim outcomes are needed before its scores can be trusted at scale.
+- **The forgery model finds edits, not fabrication,** and OCR and keyword checks degrade on handwriting and poor scans.
+- **Local chain only.** Moving to a public testnet such as Polygon Amoy is a deployment change plus key management, and is not part of the current build.
+- **Patient mobile app** (React Native) is planned for Phase 2.
+
+See [`docs/gaps_and_limitations.md`](docs/gaps_and_limitations.md) for the full list.
