@@ -131,6 +131,6 @@ writes the contract addresses into both portal `.env` files. Full steps, prerequ
 - **The tabular fraud model learned from synthetic data;** real claim outcomes are needed before its scores can be trusted at scale.
 - **The forgery model finds edits, not fabrication,** and OCR and keyword checks degrade on handwriting and poor scans.
 - **Local chain only.** Moving to a public testnet such as Polygon Amoy is a deployment change plus key management, and is not part of the current build.
-- **Patient mobile app** (React Native) is planned for Phase 2.
+- **Patient app** is built as a PWA (`patient-app/`) rather than React Native, so it installs on any phone without an app store. It has no push server, so updates arrive while the app is open, and it signs in with an OTP rather than DigiLocker.
 
 See [`docs/gaps_and_limitations.md`](docs/gaps_and_limitations.md) for the full list.

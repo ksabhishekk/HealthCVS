@@ -19,7 +19,7 @@ score, and an insurer's human reviewer makes the final call.
 | ----------------------- | --------------------------------------------------------------------- |
 | ⛓️ **7**                | on-chain steps in the life of every claim                             |
 | 📜 **4**                | smart contracts: roles, patients, claims, adjudication                |
-| 🏥 **2**                | portals: one for hospitals, one for insurers                          |
+| 🏥 **3**                | apps: a hospital portal, an insurer portal and a patient app (PWA)    |
 | 🧾 **5**                | policy types: individual, family floater, corporate, group, government |
 | 🤖 **0–100**            | AI fraud score; claims scoring **75 or more** are flagged for review  |
 | ✅ **36**               | smart-contract tests                                                  |
@@ -131,17 +131,35 @@ Sum-insured pools, member status and cover periods are enforced on-chain by
 identifiers) are enforced by
 [`insurance-portal/backend/src/services/policyRules.js`](insurance-portal/backend/src/services/policyRules.js).
 
-## 7. Privacy and safety by design
+## 7. The patient app
+
+An installable web app (PWA) in [`patient-app/`](patient-app) for insured members. It is served by the insurer
+backend's `/api/patient` API, the way an insurer's own policyholder app would be.
+
+| Feature              | How                                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Sign in**          | Aadhaar number plus a one-time code sent to the contact the insurer holds, not one typed at the hospital |
+| **My cover**         | Each policy with its sum insured, what is used and what is left, read live from the chain             |
+| **My claims**        | Every claim filed in the member's name: the seven-step progress, amounts, and what they may still owe the hospital |
+| **Family**           | The policyholder also sees family members' claims on a floater or PM-JAY policy; an employee sees their dependants' |
+| **Verify on chain**  | Each step shows its transaction and block, with the claim ID, contract and Aadhaar hash to check independently |
+| **Report a problem** | "I was not treated", "the amount is wrong", "I did not approve this": an open report forces manual review (finding floor 90) and appears on the insurer's claim page |
+| **Updates, offline** | Notifies when a claim changes while the app is open, and opens offline with the last data it loaded  |
+
+The fraud score is never shown to patients: a flagged claim appears as "under review".
+
+## 8. Privacy and safety by design
 
 - **No personal data on-chain.** Only the Aadhaar hash is stored; documents live on IPFS.
 - **Consent before access.** Patient consent is collected by one-time password (e-mail or SMS).
 - **Roles, not trust.** Every action is gated by `RoleManager`; each claim can only be acted on by the insurer that issued its policy.
 - **Hard limits.** The sum insured can never be exceeded, and a claim is refused outright if the patient was not covered on the admission date.
 - **Humans decide.** The AI flags; the insurer approves.
+- **The patient can check.** Every claim filed in their name is visible to them, and they can dispute it.
 
 ---
 
-## 8. Repository layout
+## 9. Repository layout
 
 | Path                                           | What's inside                                                         |
 | ---------------------------------------------- | --------------------------------------------------------------------- |
@@ -149,6 +167,7 @@ identifiers) are enforced by
 | [`test/`](test)                                | Contract tests (run with `npx hardhat test`)                          |
 | [`hospital-portal/`](hospital-portal)          | Hospital web app: `frontend/` (React) and `backend/` (Express)        |
 | [`insurance-portal/`](insurance-portal)        | Insurer web app: `frontend/`, `backend/` and the AI oracle            |
+| [`patient-app/`](patient-app)                  | Patient app (React PWA), served by the insurer backend                |
 | [`ai-service/`](ai-service)                    | FastAPI service for the AI checks                                     |
 | [`config/`](config)                            | Demo scenarios and the package-rate card (`procedure_rates.json`)     |
 | [`scripts/`](scripts)                          | Helper scripts, including demo document generation                    |
@@ -158,7 +177,7 @@ identifiers) are enforced by
 
 ---
 
-## 9. Run it yourself
+## 10. Run it yourself
 
 ### Prerequisites
 
@@ -204,7 +223,7 @@ cd insurance-portal\backend; npm run seed; npm run seed:hospitals
 cd hospital-portal\backend; npm run seed; node scripts\seedCatalog.js
 ```
 
-**4. Start the five services**, each in its own terminal
+**4. Start the six services**, each in its own terminal
 
 | Service                  | Command                                                                        | Port   |
 | ------------------------ | ------------------------------------------------------------------------------ | ------ |
@@ -213,8 +232,11 @@ cd hospital-portal\backend; npm run seed; node scripts\seedCatalog.js
 | Hospital backend         | `cd hospital-portal\backend; npm run dev`                                      | 5000   |
 | Insurer portal           | `cd insurance-portal\frontend; npm run dev`                                    | 5174   |
 | Hospital portal          | `cd hospital-portal\frontend; npm run dev`                                     | 5173   |
+| Patient app              | `cd patient-app; npm install; npm run dev` (`npm install` the first time only)  | 5175   |
 
-Open the hospital portal at <http://localhost:5173> and the insurer portal at <http://localhost:5174>.
+Open the hospital portal at <http://localhost:5173>, the insurer portal at <http://localhost:5174> and the patient
+app at <http://localhost:5175>. On a phone on the same Wi-Fi, open `http://<laptop-ip>:5175` (installing it as an
+app needs `localhost` or https).
 
 ### Try the demo
 
@@ -231,6 +253,9 @@ cd insurance-portal\backend; node scripts\seedDemoPolicies.js --email you@gmail.
 
 - Consent OTPs go to plus-addresses of the e-mail you give (`you+mehta@gmail.com`, …), so one inbox receives them all.
 - `notes\demo_documents\DEMO_CLAIMS.txt` lists every value to enter for each claim.
+- **Patient app:** sign in with a demo member's Aadhaar number, e.g. Rohan Mehta `7392 4816 0522`, or Vikram Sharma
+  `4627 1938 5048` to see his son's claim too. The sign-in code is e-mailed when `OTP_EMAIL_USER` and
+  `OTP_EMAIL_PASSWORD` are set in `insurance-portal\backend\.env`; otherwise it is shown on screen.
 
 **Before presenting:** the demo doctor (NMC 5002) is checked against the live NMC register, which takes 1–5 minutes;
 the result is then cached for 30 days. Warm the cache first, with the AI service running:
@@ -241,7 +266,7 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/verify-doctor -Content
 
 ---
 
-## 10. Go deeper
+## 11. Go deeper
 
 | Read                                                                           | For                                              |
 | ------------------------------------------------------------------------------ | ------------------------------------------------ |

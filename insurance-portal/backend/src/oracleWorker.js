@@ -28,6 +28,7 @@ const Claim = require('./models/Claim')
 const Policy = require('./models/Policy')
 const PolicyMember = require('./models/PolicyMember')
 const { createFindings, applyFindings } = require('./services/findings')
+const { REPORT_REASONS } = require('./services/patientReports')
 const { verifyHospitalIdentity } = require('./services/empanelment')
 const { checkContactReuse, checkDoctorTrackRecord } = require('./services/patientSignals')
 const { checkSupportingDocuments } = require('./services/supportingDocs')
@@ -667,6 +668,16 @@ async function runClaimPipeline(claimId) {
   for (const f of policyCheck.findings) {
     if (f.kind === 'confirmed') findings.confirmed(f.key, f.floor, f.label)
     else findings.unverified(f.key, f.floor, f.label)
+  }
+
+  // The patient's own word. A report from the patient app that this claim is
+  // not theirs, is wrong, or was never approved by them puts it in front of a
+  // reviewer whatever the models say.
+  const openReports = (claim.patientReports || []).filter(r => r.status === 'open')
+  if (openReports.length) {
+    const reasons = openReports.map(r => REPORT_REASONS[r.reason] || r.reason).join('; ')
+    const who = openReports.some(r => r.reportedBy === 'policyholder') ? 'The policyholder' : 'The patient'
+    findings.confirmed('patient_disputed', 90, `${who} reported a problem with this claim in the patient app: ${reasons}`)
   }
 
   const scoring = applyFindings(finalScore, findings.items)

@@ -289,6 +289,10 @@ export default function XaiPanel({ xaiCid, claimId }) {
             t: hasFinding('member_identity_mismatch').label,
             a: 'Verify the patient in person or by video KYC against the member record before any approval.',
           },
+          hasFinding('patient_disputed') && {
+            t: hasFinding('patient_disputed').label,
+            a: 'Contact the patient on the insurer-held number before any approval. If they confirm they were not treated, reject and report the hospital.',
+          },
           hasFinding('reused_document') && {
             t: hasFinding('reused_document').label,
             a: 'Compare with the earlier claim — a bill supports one claim only. Reject unless the hospital explains.',

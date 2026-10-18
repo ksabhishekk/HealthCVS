@@ -98,6 +98,21 @@ const ClaimSchema = new mongoose.Schema(
       respondedByName:    { type: String },
       respondedAt:        { type: Date },
     }],
+
+    // ── Reports from the patient app ──────────────────────────────────────────
+    // The insured person can say a claim is not theirs, the amount is wrong or
+    // they never gave consent. An open report is a confirmed oracle finding,
+    // and reviewers see it on the claim until they resolve it.
+    patientReports: [{
+      reason:         { type: String, enum: ['not_treated', 'wrong_amount', 'no_consent', 'other'], required: true },
+      message:        { type: String, default: '' },
+      reportedBy:     { type: String, enum: ['patient', 'policyholder'], default: 'patient' },  // a parent can report a child's claim
+      reportedAt:     { type: Date, default: Date.now },
+      status:         { type: String, enum: ['open', 'resolved'], default: 'open' },
+      resolution:     { type: String, default: '' },
+      resolvedByName: { type: String },
+      resolvedAt:     { type: Date },
+    }],
   },
   { timestamps: true }
 )

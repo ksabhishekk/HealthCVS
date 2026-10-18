@@ -116,8 +116,9 @@ IPFS pin is unavailable, but a doctor who cannot be verified raises the fraud sc
 
 ## 3. Identity and consent limitations
 
-### 3.1 No patient-facing app and no government-backed identity check
-A patient app with DigiLocker verification (Phase 2) is not built. Members are enrolled by their insurer when the
+### 3.1 No government-backed identity check
+The patient app (`patient-app/`, a PWA) lets members sign in, see every claim filed in their name and dispute one, but
+it signs in with an Aadhaar number and a one-time code, not DigiLocker. Members are enrolled by their insurer when the
 policy is issued, and a hospital clerk types the patient's 12-digit Aadhaar number, which is checksum-validated
 (Verhoeff) and hashed; only the hash goes on-chain. The insurer then compares the name, date of birth and sex entered
 by the hospital with its own enrolment record.
@@ -125,7 +126,7 @@ by the hospital with its own enrolment record.
 **Consequence:** a claim can only be filed for someone the insurer enrolled, but nothing proves that the person at the
 hospital is that member, only that the number and details match.
 
-**Production path:** UIDAI e-KYC or DigiLocker verification, and the patient app.
+**Production path:** UIDAI e-KYC or DigiLocker verification, used by both the hospital and the patient app.
 
 ### 3.2 Hospital–patient collusion is partially mitigated, not eliminated
 Before a claim can be submitted, the patient must confirm it with a one-time password. The OTP goes to the contact
@@ -200,8 +201,8 @@ hospital's `INSURER_NETWORK`. The demo runs one.
 | Settlement      | Fully simulated, no transfer                                     | Low                          | Intentional           |
 | Network         | Local chain only; backend-held keys                              | Medium for deployment        | Known limitation      |
 | External services | NMC, Pinata, ICD-10 API and Gemini are third-party dependencies | Low–Medium                   | Degrades gracefully   |
-| Patient identity | No DigiLocker/e-KYC or patient app                              | Medium: structural           | Partially mitigated (OTP) |
-| Collusion       | No ID-backed consent                                             | Medium: structural           | Partially mitigated (OTP, cross-claim signals) |
+| Patient identity | No DigiLocker/e-KYC                                              | Medium: structural           | Partially mitigated (OTP, patient app) |
+| Collusion       | No ID-backed consent                                             | Medium: structural           | Partially mitigated (OTP, cross-claim signals, patient disputes) |
 | Signatures      | Not the primary fraud defence                                    | n/a: design choice           | Intentional           |
 | Treatment       | Nothing proves care was delivered                                | Medium: structural           | Known limitation      |
 | Holder IDs      | GSTIN, PAN, PM-JAY, ABHA checked offline                         | Low                          | Known limitation      |

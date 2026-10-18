@@ -23,6 +23,9 @@ export const getSignalAnalytics = () =>
 export const getAnalyticsOverview = () =>
   api.get('/claims/analytics/overview')
 
+export const resolvePatientReport = (id, reportId, resolution) =>
+  api.post(`/claims/${id}/patient-reports/${reportId}/resolve`, { resolution })
+
 export const settleClaim     = (id) =>
   api.post(`/claims/${id}/settle`)
 

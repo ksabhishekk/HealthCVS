@@ -20,6 +20,8 @@ hospital-portal/frontend/.env
 insurance-portal/backend/node_modules/
 insurance-portal/frontend/node_modules/
 insurance-portal/frontend/dist/
+patient-app/node_modules/
+patient-app/dist/
 insurance-portal/backend/.env
 insurance-portal/frontend/.env
 

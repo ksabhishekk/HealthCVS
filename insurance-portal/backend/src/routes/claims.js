@@ -201,6 +201,7 @@ const enrichClaim = async (onChainClaim, includeMetadata = false) => {
     if (dbClaim) {
       base.reviewNotes = dbClaim.reviewNotes || null
       base.infoRequests = dbClaim.infoRequests || []
+      base.patientReports = dbClaim.patientReports || []
       base.reviewDecision = dbClaim.reviewDecision?.decidedAt ? dbClaim.reviewDecision : null
     }
   } catch (err) {
@@ -434,6 +435,30 @@ router.post('/:id/info-requests',
         { upsert: true, new: true }
       )
       res.json({ success: true, infoRequests: claim.infoRequests })
+    } catch (err) {
+      res.status(500).json({ error: err.message })
+    }
+  }
+)
+
+// POST /api/claims/:id/patient-reports/:reportId/resolve — a reviewer closes a
+// report the patient made from the patient app, saying what was found.
+router.post('/:id/patient-reports/:reportId/resolve',
+  requireRole('admin', 'reviewer'),
+  async (req, res) => {
+    try {
+      const resolution = String(req.body.resolution || '').trim()
+      if (!resolution) return res.status(400).json({ error: 'Say what you found' })
+      const Claim = require('../models/Claim')
+      const claim = await Claim.findOne({ blockchainClaimId: Number(req.params.id) })
+      const report = claim?.patientReports?.id(req.params.reportId)
+      if (!report) return res.status(404).json({ error: 'Report not found' })
+      report.status = 'resolved'
+      report.resolution = resolution
+      report.resolvedByName = req.user.name
+      report.resolvedAt = new Date()
+      await claim.save()
+      res.json({ success: true, patientReports: claim.patientReports })
     } catch (err) {
       res.status(500).json({ error: err.message })
     }

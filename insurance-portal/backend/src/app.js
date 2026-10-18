@@ -24,6 +24,7 @@ app.use('/api/policy', require('./routes/policy'))      // server-to-server: hos
 app.use('/api/network', require('./routes/network'))    // server-to-server: this insurer's network profile
 app.use('/api/hospitals', require('./routes/hospitals'))
 app.use('/api/kyc', require('./routes/kyc'))
+app.use('/api/patient', require('./routes/patient'))  // the patient app (patient-app/)
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }))
 

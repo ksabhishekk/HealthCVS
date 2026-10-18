@@ -20,6 +20,7 @@ const FIXED = {
   waiting_period: 'Illness inside the initial waiting period',
   parallel_claim: 'Same admission claimed under another policy',
   reused_document: 'Same bill already used on another claim',
+  patient_disputed: 'Patient disputes the claim in the patient app',
   member_ref_missing: 'Employee / member ID not given',
   member_record_missing: 'No member record for this patient',
   // "could not verify"

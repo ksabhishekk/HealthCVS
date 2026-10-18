@@ -5,7 +5,7 @@ import {
   Loader2, Bot, Gavel, BadgeCheck, Banknote, XCircle, ShieldAlert,
   TrendingUp, ChevronRight, MessageSquare, Cpu,
 } from 'lucide-react'
-import { getClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim, triggerOracle, getClaimXai, requestInfo } from '../../api/claims'
+import { getClaim, setFraudScore, adjudicateClaim, insurerReview, settleClaim, triggerOracle, getClaimXai, requestInfo, resolvePatientReport } from '../../api/claims'
 import ClaimStatusBadge from '../../components/ClaimStatusBadge'
 import { useAuth } from '../../context/AuthContext'
 import XaiPanel from '../../components/XaiPanel'
@@ -122,6 +122,68 @@ const REL = { self: 'Self', spouse: 'Spouse', son: 'Son', daughter: 'Daughter', 
 
 // The policy the claim is made under and what is left of the member's cover —
 // read live from the chain, so it reflects every approval so far.
+const REPORT_LABELS = {
+  not_treated: 'Says they did not receive this treatment',
+  wrong_amount: 'Says the amount or treatment is wrong',
+  no_consent: 'Says they never approved this claim',
+  other: 'Reported a problem',
+}
+
+// Reports the insured person made about this claim from the patient app. An
+// open report is also a confirmed oracle finding when the claim is scored.
+function PatientReports({ claimId, reports, canResolve, onChange }) {
+  const [notes, setNotes] = useState({})
+  const [busy, setBusy] = useState(null)
+  const [err, setErr] = useState('')
+  if (!reports?.length) return null
+  const open = reports.filter(r => r.status === 'open').length
+  const resolve = async (r) => {
+    setBusy(r._id); setErr('')
+    try {
+      await resolvePatientReport(claimId, r._id, notes[r._id] || '')
+      onChange()
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not resolve the report')
+    } finally {
+      setBusy(null)
+    }
+  }
+  return (
+    <div className={`border rounded-lg mb-5 px-4 py-3.5 text-sm ${open ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
+      <div className={`flex items-center gap-2 font-semibold ${open ? 'text-red-800' : 'text-gray-700'}`}>
+        <ShieldAlert className="w-4 h-4" />
+        {open ? `The patient disputes this claim (${open} open report${open > 1 ? 's' : ''})` : 'Patient reports (resolved)'}
+      </div>
+      <div className="mt-2 space-y-3">
+        {reports.map(r => (
+          <div key={r._id} className="bg-white/70 rounded-lg border border-black/5 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-gray-900">
+                {REPORT_LABELS[r.reason] || r.reason}
+                {r.reportedBy === 'policyholder' && <span className="font-normal text-gray-500"> (reported by the policyholder)</span>}
+              </span>
+              <span className="text-xs text-gray-500">{fmtTs(r.reportedAt)}</span>
+            </div>
+            {r.message && <p className="text-gray-700 mt-1">“{r.message}”</p>}
+            {r.status === 'resolved' ? (
+              <p className="text-xs text-gray-600 mt-1.5">Resolved by {r.resolvedByName} on {fmtTs(r.resolvedAt)}: {r.resolution}</p>
+            ) : canResolve && (
+              <div className="flex gap-2 mt-2">
+                <input className="input py-1.5 text-[13px]" placeholder="What did you find? e.g. Spoke to the patient, treatment confirmed"
+                  value={notes[r._id] || ''} onChange={e => setNotes(n => ({ ...n, [r._id]: e.target.value }))} />
+                <button className="btn-secondary whitespace-nowrap" disabled={busy === r._id || !(notes[r._id] || '').trim()} onClick={() => resolve(r)}>
+                  {busy === r._id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Mark resolved
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {err && <p className="text-red-700 text-xs mt-2">{err}</p>}
+    </div>
+  )
+}
+
 function PolicyCard({ policy, claimed, admissionDate }) {
   const c = policy.cover
   const usedPct = c?.sumInsured ? Math.min(100, Math.round((c.used / c.sumInsured) * 100)) : 0
@@ -320,6 +382,8 @@ export default function ClaimDetail() {
           {claim.settlement.recommendedAmount > 0 && ` · the contract recommended ${fmt(claim.settlement.recommendedAmount)}`}
         </div>
       )}
+
+      <PatientReports claimId={id} reports={claim.patientReports} canResolve={hasRole('admin', 'reviewer')} onChange={load} />
 
       {claim.policy && <PolicyCard policy={claim.policy} claimed={claim.claimedAmount} admissionDate={claim.admissionDate} />}
 
