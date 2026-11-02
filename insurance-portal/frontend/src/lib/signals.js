@@ -5,6 +5,7 @@ const FIXED = {
   doctor_name_mismatch: 'Registration belongs to another doctor',
   procedure_mismatch: 'Procedure does not fit diagnosis',
   bill_not_medical: 'Bill is not a medical bill',
+  bill_tampered: 'Bill looks digitally edited',
   bill_overclaim: 'Claim exceeds billed total',
   bill_mismatch: 'Bill name or dates disagree',
   duplicate_documents: 'Same file in several slots',
@@ -25,6 +26,7 @@ const FIXED = {
   member_record_missing: 'No member record for this patient',
   // "could not verify"
   bill_not_analysed: 'Bill could not be analysed',
+  bill_tamper_suspected: 'Forgery model alone suspects editing',
   bill_unverified: 'Bill amount could not be read',
   hospital_unverified: 'Hospital register unavailable',
   kyc_aadhaar_unread: 'No Aadhaar number readable on the ID',

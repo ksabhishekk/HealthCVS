@@ -95,8 +95,8 @@ def render(path, lines, watermark=None):
     img.save(path)
 
 
-def bill(path, claim, person, dx):
-    render(path, [
+def bill_lines(claim, person, dx):
+    return [
         (HOSPITAL["name"].upper(), 46, True),
         (f'Hospital Code: {HOSPITAL["code"]}    |    Multispeciality Hospital', 26, False),
         ("HOSPITAL BILL / INVOICE", 38, True),
@@ -110,7 +110,30 @@ def bill(path, claim, person, dx):
         (f'{dx["procedureName"]} ({dx["procedureCode"]})                         Rs. {claim["billed"]:,.2f}', 28, False),
         (f'Amount Payable: Rs. {claim["billed"]:,.2f}', 34, True),
         ("Payment Mode: Insurance (cashless)", 26, False),
-    ])
+    ]
+
+
+def bill(path, claim, person, dx):
+    render(path, bill_lines(claim, person, dx))
+
+
+def paste_amount(path, claim, person, dx, new_amount):
+    """Crudely paste a new amount over every rupee figure on a rendered bill:
+    an off-white patch and a bolder, slightly larger, slightly offset font —
+    the kind of edit a hospital makes with an image editor to inflate a bill."""
+    img = Image.open(path).convert("RGB")
+    draw = ImageDraw.Draw(img)
+    pad, y = 70, 70
+    for text, size, bold in bill_lines(claim, person, dx):
+        at = text.find("Rs. ")
+        if at >= 0:
+            f = font(size, bold)
+            x0 = pad + f.getlength(text[:at])
+            x1 = pad + f.getlength(text)
+            draw.rectangle((x0 - 4, y - 3, x1 + 10, y + size + 8), fill=(250, 250, 246))
+            draw.text((x0 + 3, y + 2), f"Rs. {new_amount:,.2f}", fill=(25, 25, 25), font=font(size + 3, True))
+        y += size + 20
+    img.save(path)
 
 
 def insurance_card(path, policy, person, mid):
@@ -232,6 +255,8 @@ def main():
         else:
             ids = member_ids(policy)
             bill(os.path.join(folder, "1_hospital_bill.png"), c, person, dx)
+            if c.get("pastedAmount"):
+                paste_amount(os.path.join(folder, "1_hospital_bill.png"), c, person, dx, c["pastedAmount"])
             insurance_card(os.path.join(folder, "2_insurance_card.png"), policy, person, ids[person["key"]])
             consultation(os.path.join(folder, "4_consultation_papers.png"), c, person, dx)
             investigations(os.path.join(folder, "5_investigation_report.png"), c, person, dx)
@@ -253,7 +278,8 @@ def main():
             f'  Policy    {policy["policyId"]} ({policy["planName"]})' + (f' | ID on card: {c["memberRef"]}' if c.get("memberRef") else ""),
             f'  Admission {c["admission"]} -> {c["discharge"]} | cause: illness',
             f'  Medical   {dx["diagnosis"]} | ICD {dx["icdCode"]} | {dx["procedureCode"]} {dx["procedureName"]} | amount {c["amount"]}',
-            f'  Documents {c["id"]}/1..5' + (" (bill and papers copied from " + c["reuse"] + ")" if c.get("reuse") else ""),
+            f'  Documents {c["id"]}/1..5' + (" (bill and papers copied from " + c["reuse"] + ")" if c.get("reuse") else "")
+            + (f' (bill edited: Rs {c["billed"]:,} pasted over with Rs {c["pastedAmount"]:,})' if c.get("pastedAmount") else ""),
         ]
         if c.get("secondPolicy"):
             sheet.append(f'  Then file again under {POLICIES[c["secondPolicy"]]["policyId"]} with the same documents and 2b_insurance_card_second_policy.png as the card')

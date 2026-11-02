@@ -52,6 +52,35 @@ def _unavailable(reason: str) -> dict:
     return {"available": False, "score": None, "reasoning": reason}
 
 
+# The first call after a quiet spell is sometimes slow, so one slow or failed
+# call must not silently drop the second opinion. Two attempts of 40 s each
+# stay inside the oracle's 150 s budget for /analyze-document.
+_ATTEMPTS = 2
+_TIMEOUT_S = 40
+
+
+def _post_with_retry(api_key: str, payload: dict):
+    """POST to Gemini, retrying once on a timeout, network error, 429 or 5xx."""
+    for attempt in range(1, _ATTEMPTS + 1):
+        last = attempt == _ATTEMPTS
+        try:
+            resp = requests.post(
+                _GEMINI_URL,
+                params={"key": api_key},
+                json=payload,
+                timeout=_TIMEOUT_S,
+            )
+        except (requests.Timeout, requests.ConnectionError):
+            if last:
+                raise
+            print(f"[INFO] Gemini attempt {attempt} failed (timeout/network), retrying")
+            continue
+        if (resp.status_code == 429 or resp.status_code >= 500) and not last:
+            print(f"[INFO] Gemini attempt {attempt} returned HTTP {resp.status_code}, retrying")
+            continue
+        return resp
+
+
 def analyze_image_with_genai(image_path: str) -> dict:
     """
     Send *image_path* to Gemini Flash for an independent tamper-probability
@@ -113,12 +142,7 @@ def analyze_image_with_genai(image_path: str) -> dict:
             },
         }
 
-        resp = requests.post(
-            _GEMINI_URL,
-            params={"key": api_key},
-            json=payload,
-            timeout=30,
-        )
+        resp = _post_with_retry(api_key, payload)
 
         # Handle HTTP-level errors
         if resp.status_code == 429:
@@ -151,8 +175,6 @@ def analyze_image_with_genai(image_path: str) -> dict:
         )
         if not text:
             return _unavailable("Gemini returned empty text")
-
-        print(f"[DEBUG] Gemini raw response text: {repr(text)}")
 
         # Strip markdown code fences if present
         cleaned = re.sub(r"```(?:json)?\s*", "", text).strip().rstrip("`")

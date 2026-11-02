@@ -424,7 +424,7 @@ async function runClaimPipeline(claimId) {
       form.append('file', fs.createReadStream(docPath))
       const cvRes = await axios.post(`${AI}/analyze-document`, form, {
         headers: form.getHeaders(),
-        timeout: 60000,
+        timeout: 150000,  // Gemini may retry once (2 x 40 s) on top of the model
       })
       cvResult = cvRes.data
       cvAvailable = true
@@ -588,6 +588,19 @@ async function runClaimPipeline(claimId) {
     findings.unverified('bill_not_analysed', 60, 'The hospital bill could not be analysed, so the claimed amount has not been verified against it.')
   }
   if (billCheck.is_medical_bill === false) findings.confirmed('bill_not_medical', 75, billCheck.document_type_reason)
+  // At 30% weight even a certain forgery moves the base score by ~30 points, so
+  // a bill both readers call edited is raised as a finding of its own. Gemini
+  // must be one of them: the CV model alone is trained on too little data to
+  // stand as evidence, so on its own it only asks for a look.
+  const geminiTamper = cvResult._debug?.genai_score
+  if (cvAvailable && cvScore >= 80) {
+    if (geminiTamper != null && geminiTamper >= 80) {
+      const why = cvResult._debug?.genai_reasoning ? ` Gemini: ${cvResult._debug.genai_reasoning}` : ''
+      findings.confirmed('bill_tampered', 75, `The hospital bill looks digitally edited (tamper score ${Math.round(cvScore)}/100).${why}`)
+    } else {
+      findings.unverified('bill_tamper_suspected', 60, `The forgery model alone scores the bill ${Math.round(cvScore)}/100 for editing; Gemini did not confirm it.`)
+    }
+  }
   if (billCheck.overclaim_ratio) {
     findings.confirmed('bill_overclaim', 75, `Claim exceeds the billed total by ${billCheck.overclaim_ratio.toFixed(2)}x`)
   }
@@ -703,6 +716,13 @@ async function runClaimPipeline(claimId) {
       xgboostScore: tabRes.data.xgboost_score ?? null,
       anomalyScore: tabRes.data.anomaly_score ?? null,
       cvScore,
+      // Second opinion on the bill from Gemini, and which of the two set cvScore.
+      documentAi: cvAvailable ? {
+        modelScore:     cvResult._debug?.trained_model_score ?? cvResult.original_pipeline_score ?? null,
+        geminiScore:    cvResult._debug?.genai_score ?? null,
+        geminiReason:   cvResult._debug?.genai_reasoning || '',
+        decisionSource: cvResult._debug?.score_source || cvResult.decision_source || null,
+      } : null,
       nlpScore,
       nlpConsistent,
       doctorVerified: doctorOk,
