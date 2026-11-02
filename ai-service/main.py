@@ -32,7 +32,23 @@ from fastapi.responses import FileResponse
 from explain_tabular import get_fraud_score, explain_prediction, get_hybrid_fraud_score
 from nlp_helper import verify_prescription_consistency, verify_doctor_credentials, verify_doctor_domain
 from genai_helper import analyze_image_with_genai
+
+# ---------------------------------------------------------------------------
+# Gemini override configuration
+# ---------------------------------------------------------------------------
+# When True (default), the final tamper score is taken from Gemini whenever
+# Gemini and the pipeline model disagree by more than GEMINI_DISAGREE_THRESHOLD.
+# Set GEMINI_OVERRIDE_ENABLED=false in the environment to restore the original
+# behaviour exactly (Gemini available → use Gemini directly, no comparison).
+GEMINI_OVERRIDE_ENABLED: bool = os.environ.get("GEMINI_OVERRIDE_ENABLED", "true").strip().lower() != "false"
+
+# Absolute difference in [0, 1] space above which Gemini and a model are
+# considered to "disagree".  Mirrors the implicit gap in the original code
+# (any nonzero difference was already treated as a replacement).
+_GEMINI_DISAGREE_THRESHOLD: float = 0.20
+
 from PIL import Image
+
 
 try:
     import tensorflow as tf
@@ -100,6 +116,85 @@ def _temp_path(filename: str) -> str:
     """Generate a unique temp filename to avoid collisions on concurrent requests."""
     unique_id = uuid.uuid4().hex[:8]
     return f"temp_{unique_id}_{filename}"
+
+
+# ---------------------------------------------------------------------------
+# Gemini override helpers
+# ---------------------------------------------------------------------------
+
+def _build_model_comparisons(genai_score, models: list) -> list:
+    """
+    Build per-model Gemini comparison records.
+
+    For each model dict ``{name, label, score, available}`` compute:
+    - ``model_score``  – 0-100, or None when the model was unavailable
+    - ``gemini_score`` – 0-100, or None when Gemini was unavailable
+    - ``abs_diff``     – absolute difference in [0, 100], or None
+    - ``agrees``       – True/False/None (None when either score is missing)
+
+    Parsing/validation mirrors the pattern in genai_helper.py: a score is only
+    trusted if it is already a validated float in [0, 1] (ensured by the caller).
+    """
+    result = []
+    for m in models:
+        model_score = None
+        model_score_100 = None
+        if m.get("available") and isinstance(m.get("score"), float):
+            s = m["score"]
+            if 0.0 <= s <= 1.0:
+                model_score = s
+                model_score_100 = round(s * 100, 1)
+
+        gemini_score_100 = round(genai_score * 100, 1) if (
+            genai_score is not None and isinstance(genai_score, float) and 0.0 <= genai_score <= 1.0
+        ) else None
+
+        abs_diff = None
+        agrees = None
+        if model_score_100 is not None and gemini_score_100 is not None:
+            abs_diff = round(abs(model_score_100 - gemini_score_100), 1)
+            # Reuse _GEMINI_DISAGREE_THRESHOLD (converted to 0-100 scale)
+            agrees = abs_diff <= (_GEMINI_DISAGREE_THRESHOLD * 100)
+
+        result.append({
+            "model": m["name"],
+            "model_label": m["label"],
+            "model_score": model_score_100,
+            "gemini_score": gemini_score_100,
+            "abs_diff": abs_diff,
+            "agrees": agrees,
+        })
+    return result
+
+
+def _apply_gemini_override(
+    genai_score,
+    genai_available: bool,
+    pipeline_score: float,
+    threshold: float,
+) -> tuple:
+    """
+    Decide the final tamper probability when GEMINI_OVERRIDE_ENABLED is True.
+
+    Rules:
+    - Gemini unavailable / errored          → pipeline score, source=model_fallback
+    - Gemini agrees with pipeline           → pipeline score, source=pipeline_agreement
+    - Gemini disagrees with pipeline        → Gemini score,   source=gemini_override
+
+    Returns (final_prob: float, decision_source: str, score_source: str).
+    The ``decision_source`` field mirrors the additive response field spec:
+    "pipeline" when the pipeline score is used, "gemini" when overridden.
+    """
+    if not genai_available or genai_score is None:
+        return pipeline_score, "pipeline", "model_fallback"
+
+    diff = abs(genai_score - pipeline_score)
+    if diff <= threshold:
+        # Agreement: keep the original pipeline score unchanged.
+        return pipeline_score, "pipeline", "pipeline_agreement"
+    else:
+        # Disagreement: Gemini's judgement wins.
+        return genai_score, "gemini", "gemini_override"
 
 
 # ---------------------------------------------------------------------------
@@ -177,20 +272,53 @@ async def analyze_document(file: UploadFile = File(...)):
             trained_model_prob = 0.75
             heatmap_path = None
 
-        # 6. GenAI independent tamper estimate
+        # 6. GenAI independent tamper estimate (one call, result reused everywhere)
         genai_result = analyze_image_with_genai(temp_path)
+        genai_available = genai_result["available"]
+        genai_score = genai_result["score"]  # float 0-1 or None
 
-        if genai_result["available"]:
-            final_prob = genai_result["score"]
-            score_source = "genai"
+        # ── 6a. Per-model comparison ────────────────────────────────────────────
+        # Compare Gemini against every model that feeds the final tamper score.
+        # Currently that is one model: the EfficientNetB3 CV model.  Add further
+        # stages here as new models are wired into this endpoint.
+        model_comparisons = _build_model_comparisons(
+            genai_score=genai_score,
+            models=[
+                {
+                    "name": "efficientnetb3_cv",
+                    "label": "EfficientNetB3 CV",
+                    "score": trained_model_prob,  # 0-1
+                    "available": True,
+                },
+            ],
+        )
+
+        # ── 6b. Override / fallback logic ───────────────────────────────────────
+        original_pipeline_score = trained_model_prob  # always the raw model output
+
+        if GEMINI_OVERRIDE_ENABLED:
+            final_prob, decision_source, score_source = _apply_gemini_override(
+                genai_score=genai_score,
+                genai_available=genai_available,
+                pipeline_score=trained_model_prob,
+                threshold=_GEMINI_DISAGREE_THRESHOLD,
+            )
         else:
-            final_prob = trained_model_prob
-            score_source = "model_fallback"
+            # Original behaviour: use Gemini directly if available, else fall back.
+            if genai_available:
+                final_prob = genai_score
+                score_source = "genai"
+            else:
+                final_prob = trained_model_prob
+                score_source = "model_fallback"
+            decision_source = "pipeline"  # override disabled — pipeline always wins
 
         print(
             f"[INFO] Trained model: {trained_model_prob:.3f}, "
-            f"GenAI: {genai_result['score']}, "
-            f"Final: {final_prob:.3f} (source: {score_source})"
+            f"GenAI: {genai_score}, "
+            f"Final: {final_prob:.3f} (source: {score_source}, "
+            f"decision_source: {decision_source}, "
+            f"override_enabled: {GEMINI_OVERRIDE_ENABLED})"
         )
 
         return {
@@ -198,11 +326,18 @@ async def analyze_document(file: UploadFile = File(...)):
             "is_suspicious": final_prob > 0.50,
             "ocr_text": ocr_text,
             "heatmap_file": heatmap_path,
+            # Non-breaking additive fields — new consumers may read these;
+            # existing consumers that only look at tamper_probability / is_suspicious
+            # / ocr_text / heatmap_file are unaffected.
+            "decision_source": decision_source,
+            "original_pipeline_score": round(original_pipeline_score * 100, 1),
+            "model_comparisons": model_comparisons,
             "_debug": {
                 "trained_model_score": round(trained_model_prob * 100, 1),
-                "genai_score": round(genai_result["score"] * 100, 1) if genai_result["score"] is not None else None,
+                "genai_score": round(genai_score * 100, 1) if genai_score is not None else None,
                 "genai_reasoning": genai_result["reasoning"],
                 "score_source": score_source,
+                "gemini_override_enabled": GEMINI_OVERRIDE_ENABLED,
             },
         }
 
