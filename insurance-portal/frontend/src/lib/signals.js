@@ -26,7 +26,7 @@ const FIXED = {
   member_record_missing: 'No member record for this patient',
   // "could not verify"
   bill_not_analysed: 'Bill could not be analysed',
-  bill_tamper_suspected: 'Forgery model alone suspects editing',
+  bill_tamper_suspected: 'Bill may be edited (unconfirmed)',
   bill_unverified: 'Bill amount could not be read',
   hospital_unverified: 'Hospital register unavailable',
   kyc_aadhaar_unread: 'No Aadhaar number readable on the ID',

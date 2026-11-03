@@ -595,10 +595,10 @@ async function runClaimPipeline(claimId) {
   const geminiTamper = cvResult._debug?.genai_score
   if (cvAvailable && cvScore >= 80) {
     if (geminiTamper != null && geminiTamper >= 80) {
-      const why = cvResult._debug?.genai_reasoning ? ` Gemini: ${cvResult._debug.genai_reasoning}` : ''
+      const why = cvResult._debug?.genai_reasoning ? ` ${cvResult._debug.genai_reasoning}` : ''
       findings.confirmed('bill_tampered', 75, `The hospital bill looks digitally edited (tamper score ${Math.round(cvScore)}/100).${why}`)
     } else {
-      findings.unverified('bill_tamper_suspected', 60, `The forgery model alone scores the bill ${Math.round(cvScore)}/100 for editing; Gemini did not confirm it.`)
+      findings.unverified('bill_tamper_suspected', 60, `The bill may have been edited (tamper score ${Math.round(cvScore)}/100), but the document checks did not agree on it.`)
     }
   }
   if (billCheck.overclaim_ratio) {

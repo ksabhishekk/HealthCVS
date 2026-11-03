@@ -49,35 +49,6 @@ function Badge({ ok, trueLabel, falseLabel }) {
 }
 
 // ── Main XAI Panel ────────────────────────────────────────────────────────────
-// ── Gemini second opinion on the bill ─────────────────────────────────────────
-// The forgery score above is either the EfficientNet model's or Gemini's: the
-// model's when the two agree within 20 points, Gemini's when they disagree.
-const DECISION_TEXT = {
-  pipeline_agreement: 'Model and Gemini agree — model score kept',
-  gemini_override:    'Model and Gemini disagree by more than 20 points — Gemini score used',
-  model_fallback:     'Gemini unavailable — model score used',
-  genai:              'Gemini score used (override comparison switched off)',
-}
-
-function DocumentAi({ doc }) {
-  if (!doc) return null
-  const override = doc.decisionSource === 'gemini_override'
-  return (
-    <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${override ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-200'}`}>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-600">
-        <span>EfficientNet model: <b>{doc.modelScore != null ? Math.round(doc.modelScore) : '—'}</b>/100</span>
-        <span>Gemini: <b>{doc.geminiScore != null ? Math.round(doc.geminiScore) : '—'}</b>/100</span>
-      </div>
-      <p className={`mt-1 font-medium ${override ? 'text-red-700' : 'text-gray-700'}`}>
-        {DECISION_TEXT[doc.decisionSource] || 'Model score used'}
-      </p>
-      {doc.geminiReason && doc.geminiScore != null && (
-        <p className="mt-1 text-gray-600 italic leading-relaxed">Gemini: “{doc.geminiReason}”</p>
-      )}
-    </div>
-  )
-}
-
 export default function XaiPanel({ xaiCid, claimId }) {
   const [data, setData]     = useState(null)
   const [loading, setLoading] = useState(false)
@@ -281,11 +252,10 @@ export default function XaiPanel({ xaiCid, claimId }) {
           <div>
             <div className="flex items-center gap-1.5 mb-1">
               <FileSearch className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-xs font-medium text-gray-600">Document Forgery (EfficientNet-B3 + Gemini) — 30% weight</span>
+              <span className="text-xs font-medium text-gray-600">Document Forgery (EfficientNet-B3) — 30% weight</span>
               {isSuspicious && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">Suspicious</span>}
             </div>
             <ScoreBar label="" value={cvScore ?? 0} color={cvScore > 50 ? 'red' : 'green'} />
-            <DocumentAi doc={components?.documentAi} />
           </div>
           <div>
             <div className="flex items-center gap-1.5 mb-1">
