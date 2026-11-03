@@ -241,7 +241,7 @@ app needs `localhost` or https).
 ### Try the demo
 
 [`config/demo_scenarios.json`](config/demo_scenarios.json) defines **six policies** (one of each type, plus one person
-holding two policies) and **twelve claims** covering clean, partial and fraudulent cases.
+holding two policies) and **thirteen claims** covering clean, partial and fraudulent cases (including a bill with an edited amount).
 
 ```powershell
 # issue the demo policies on-chain
