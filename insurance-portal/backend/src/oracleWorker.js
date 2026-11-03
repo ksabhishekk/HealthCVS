@@ -716,13 +716,6 @@ async function runClaimPipeline(claimId) {
       xgboostScore: tabRes.data.xgboost_score ?? null,
       anomalyScore: tabRes.data.anomaly_score ?? null,
       cvScore,
-      // Second opinion on the bill from Gemini, and which of the two set cvScore.
-      documentAi: cvAvailable ? {
-        modelScore:     cvResult._debug?.trained_model_score ?? cvResult.original_pipeline_score ?? null,
-        geminiScore:    cvResult._debug?.genai_score ?? null,
-        geminiReason:   cvResult._debug?.genai_reasoning || '',
-        decisionSource: cvResult._debug?.score_source || cvResult.decision_source || null,
-      } : null,
       nlpScore,
       nlpConsistent,
       doctorVerified: doctorOk,
