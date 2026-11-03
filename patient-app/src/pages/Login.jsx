@@ -110,7 +110,7 @@ export default function Login({ onSignedIn }) {
               </div>
               {login?.devOtp && (
                 <div className="rounded-xl bg-amber-50 text-amber-800 text-sm px-3 py-2.5">
-                  Demo mode — no e-mail service is set up, so here is the code: <strong className="tracking-wider">{login.devOtp}</strong>
+                  E-mail isn't set up on this server. Your code is <strong className="tracking-wider">{login.devOtp}</strong>
                 </div>
               )}
               {error && <p className="text-sm text-rose-600">{error}</p>}
